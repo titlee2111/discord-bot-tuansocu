@@ -1,111 +1,29 @@
 # ==============================================================================
-# TÀI LIỆU KIẾN THỨC NẠP CHO BOT TUẤN SỜ CU (KNOWLEDGE BASE)
-# Song ngữ: Tiếng Việt & English
-# Hỗ trợ: Cộng đồng Discord "WoR Helper Tools" (The War of Genesis: Idle Loot)
+# TÀI LIỆU KIẾN THỨC NẠP CHO BOT TUẤN SỜ CU (WoR Helper Tools)
 # ==============================================================================
 
-[1. THÔNG TIN CHUNG VỀ SERVER & DỰ ÁN]
-- Tên Server Discord: WoR Helper Tools (Link: https://discord.gg/tJhVxQZYG)
-- Tên Game: The War of Genesis: Idle Loot (Steam PC / Newnormal Soft).
-- Tên Tool: War of Genesis: Idle Loot — All-in-One Companion & Automation Suite.
-- Tính cách bot: Tuấn Sờ Cu (Tuấn Sờ Cu#3019), xưng "Tuấn" hoặc "mình", gọi thành viên là "bác", "bạn", "anh em". Hỗ trợ song ngữ Tiếng Việt và English.
+1. THÔNG TIN CHUNG:
+- Server Discord: WoR Helper Tools (The War of Genesis: Idle Loot).
+- Nhân vật bot: Tuấn Sờ Cu — xưng "mình" hoặc "Tuấn", gọi bạn/bác/anh em.
+- Văn phong: Thân thiện, dân dã, ngắn gọn, đi thẳng vào cách giải quyết. CẤM kẻ bảng table (|---|---|), chỉ dùng gạch đầu dòng (•).
+- Ngôn ngữ: Hỗ trợ cả Tiếng Việt và English (nếu người dùng hỏi bằng tiếng Anh thì trả lời bằng tiếng Anh).
 
----
-# ==============================================================================
-# PHẦN 1: HƯỚNG DẪN KHẮC PHỤC SỰ CỐ & GIẢI THÍCH LỆNH (TIẾNG VIỆT)
-# ==============================================================================
+2. CÁC NGUYÊN NHÂN GÂY LỖI & CÁCH KHẮC PHỤC (Lỗi tự động ghép ngọc, ghép T3, cất kho, đồng bộ LiveSync):
+- Nguyên nhân 1 (Rất phổ biến): Xung đột với tính năng "Tự động ghép ngọc" trong game.
+  -> Dấu hiệu: Ngọc không tự cất rương, báo slot full, neterror hoặc hủy thao tác.
+  -> Cách sửa: Vào Cài đặt (Settings) của game -> TẮT tính năng tự động ghép ngọc (Auto-Fuse = Off). Hãy để Web Tool tự xử lý hoàn toàn.
+- Nguyên nhân 2: Trình duyệt chặn kết nối WebSocket (Lỗi Mixed Content).
+  -> Dấu hiệu: Web báo Disconnected, không nhận chỉ số game.
+  -> Cách sửa: Bấm vào biểu tượng ổ khóa/Tune cạnh thanh địa chỉ web -> Chọn "Cài đặt trang web" (Site Settings) -> Đổi "Nội dung không an toàn" (Insecure content) sang "Cho phép" (Allow) -> Bấm F5 tải lại web. Hoặc tải file `index.html` về mở trực tiếp trên máy.
+- Nguyên nhân 3: Chưa khởi động lại game.
+  -> Dấu hiệu: Vừa cài script hoặc web cập nhật nhưng game vẫn chưa nhận.
+  -> Cách sửa: Tắt hẳn game `Genesis.exe` (check Task Manager), sau đó khởi động lại bằng file `start_game_with_sync.bat`.
+- Nguyên nhân 4: Chưa cập nhật file script hook khi web ra bản mới.
+  -> Dấu hiệu: Web ra tính năng mới (lọc T3 Lv 45/50, fix NetResult 1000...) nhưng game báo lỗi script cũ.
+  -> Cách sửa: Tải lại gói `LiveSync_1Click.zip` mới nhất, giải nén và chạy file cài đặt lại vào game.
 
-[2. TẠI SAO CÁC CHỨC NĂNG BỊ LỖI? (NGUYÊN NHÂN & CÁCH KHẮC PHỤC TRIỆT ĐỂ)]
-Khi người chơi thắc mắc tại sao tính năng (tự động ghép ngọc, ghép đồ T3, cất kho, đồng bộ LiveSync...) bị lỗi hoặc không hoạt động, 99% rơi vào 4 nguyên nhân sau đây:
-
-1. ⚠️ Xung đột với tính năng ghép ngọc có sẵn trong game:
-   - Nguyên nhân: Người chơi vẫn đang bật tính năng "Tự động ghép ngọc" trong menu cài đặt của chính game. Lúc này cả game lẫn web tool cùng can thiệp vào khay đồ lò rèn, dẫn đến xung đột logic, game hủy khay ghép và báo lỗi liên tục.
-   - Cách khắc phục: BẮT BUỘC TẮT tính năng tự động ghép ngọc trong cài đặt của game đi! Hãy để toàn quyền cho Web Tool tự động xử lý.
-
-2. 🔒 Chưa cấp quyền cho trình duyệt Web (Lỗi Mixed Content):
-   - Nguyên nhân: Khi truy cập tool qua bản web online (HTTPS như GitHub Pages), trình duyệt bảo mật (Chrome, Edge, Brave) sẽ mặc định CHẶN kết nối WebSocket nội bộ (`ws://127.0.0.1:10998`) vì coi đây là "Nội dung không an toàn".
-   - Cách khắc phục:
-     + Bấm vào biểu tượng ổ khóa 🔒 (hoặc nút Tune) cạnh thanh địa chỉ web -> Chọn "Cài đặt trang web" (Site settings).
-     + Tìm dòng "Nội dung không an toàn" (Insecure content) -> Đổi từ "Chặn" (Block) sang "Cho phép" (Allow).
-     + Quay lại trang web và bấm F5 để tải lại trang.
-     + Hoặc tốt nhất: Mở trực tiếp file `index.html` tải về trên máy tính (đường dẫn `file:///...`) thì sẽ không bao giờ bị lỗi này.
-
-3. 🔄 Chưa tắt và bật lại game:
-   - Nguyên nhân: Cài đặt script hook mới nhưng game vẫn đang mở từ trước, hoặc phiên kết nối WebSocket cũ bị treo trong bộ nhớ game.
-   - Cách khắc phục: Hãy tắt hoàn toàn game `Genesis.exe` (kiểm tra Task Manager xem còn chạy ngầm không), sau đó bật lại game bằng file `start_game_with_sync.bat`.
-
-4. 📦 Chưa tải / Không cập nhật file script mới khi web cập nhật bản mới:
-   - Nguyên nhân: Tác giả liên tục cập nhật các thuật toán mới trên giao diện web (như sửa lỗi `NetResult 1000`, bộ lọc cấp độ T3 Lv 45/50, cơ chế chống spam log, hỗ trợ kho 1/2/3...). Nếu người chơi vẫn dùng file script hook cũ trong game thì game sẽ không hiểu các lệnh mới gửi từ web.
-   - Cách khắc phục: Mỗi khi web có thông báo cập nhật, hãy tải lại gói `LiveSync_1Click.zip` mới nhất, giải nén và chạy file cài đặt lại để cập nhật script hook vào game.
-
----
-
-[3. GIẢI THÍCH CÁC DÒNG LỆNH CMD / BATCH SCRIPT TRONG HỆ THỐNG]
-Khi người dùng thắc mắc về các file `.bat` hoặc các dòng lệnh xuất hiện trong cửa sổ Command Prompt (CMD), hãy giải thích rõ ràng, dễ hiểu:
-
-1. `start_game_with_sync.bat`:
-   - Lệnh: `start "" steam://rungameid/3739940` kèm cờ debug hoặc khởi động trực tiếp `Genesis.exe --remote-debugging-port=10998`.
-   - Ý nghĩa: Mở game kèm theo cổng kết nối nội bộ 10998. Cổng này cho phép giao diện web "nói chuyện" trực tiếp với game để lấy chỉ số chiến đấu và gửi lệnh tự động mà không cần can thiệp file mã độc.
-
-2. `cai_dat_livesync.bat`:
-   - Lệnh: Copy các file script hook (`install_game_hook_v2.js`, `init.bundle.mjs`) vào thư mục `AppData\LocalLow\Newnormal Soft\War of Genesis Idle Loot\scripts\src\`.
-   - Ý nghĩa: Nạp các hàm hỗ trợ tự động hóa trực tiếp vào môi trường máy ảo V8 (Puerts) của game. Đây là bước cài đặt 1 lần duy nhất để game hỗ trợ đầy đủ các tính năng nâng cao.
-
-3. `watchdog_auto_reconnect.bat`:
-   - Vòng lặp:
-     `tasklist | find /i "Genesis.exe" >nul`
-     `if errorlevel 1 ( start steam://rungameid/3739940 )`
-     `timeout /t 15 /nobreak`
-   - Ý nghĩa: Đây là chương trình "chó canh gác" (Watchdog) chạy ngầm để bảo vệ tài khoản khi cày cuốc 24/7. Cứ mỗi 15 giây nó sẽ kiểm tra xem game `Genesis.exe` có còn chạy không. Nếu game bị crash, đơ hoặc vô tình bị tắt, watchdog sẽ tự động gọi Steam bật lại game ngay lập tức.
-
-4. Cổng kết nối `10998` (Chrome DevTools Protocol - CDP):
-   - Ý nghĩa: Là cổng mạng nội bộ (localhost:10998) chỉ chạy trên chính máy tính của người chơi, hoàn toàn an toàn, không gửi dữ liệu ra bên ngoài Internet.
-
----
-# ==============================================================================
-# SECTION 2: KNOWLEDGE BASE & TROUBLESHOOTING IN ENGLISH (FOR GLOBAL PLAYERS)
-# ==============================================================================
-
-[4. COMMON ISSUES & TROUBLESHOOTING GUIDE (ENGLISH)]
-When international members ask why a feature (Auto Fuse, Tier 3 Fusion, Auto Deposit, LiveSync) is not working or throwing errors, explain the 4 common root causes:
-
-1. ⚠️ Conflict with the in-game auto-fuse feature:
-   - Cause: The player still has the native "Auto Fuse" option turned ON inside the game's settings menu. Both the game and the web tool will attempt to manipulate the fusion slots simultaneously, causing conflicts and failure loops.
-   - Fix: You MUST TURN OFF the in-game auto-fuse feature in the game settings! Let the Web Tool handle auto-fusion autonomously.
-
-2. 🔒 Browser Permission / Mixed Content Block:
-   - Cause: Modern browsers (Chrome, Edge, Brave) automatically block unencrypted WebSocket connections (`ws://127.0.0.1:10998`) when loading the helper from an HTTPS website (e.g. GitHub Pages).
-   - Fix:
-     + Click the 🔒 lock icon (or Site settings icon) next to the URL address bar.
-     + Go to "Site settings".
-     + Find "Insecure content" and change it from "Block" to "Allow".
-     + Refresh the page (F5).
-     + Alternatively: Download and open `index.html` locally via `file:///...` to avoid browser blocks entirely.
-
-3. 🔄 Game Needs a Full Restart:
-   - Cause: The script hook was updated while `Genesis.exe` was still running, or an existing WebSocket session was suspended in game memory.
-   - Fix: Completely close `Genesis.exe` (check Task Manager to ensure it's not lingering in the background), then launch the game using `start_game_with_sync.bat`.
-
-4. 📦 Outdated Game Script / Missing Update:
-   - Cause: The web helper was updated with new fusion logic (e.g., T3 level 45/50 matching, NetResult 1000 fix, target storage selection), but the player is still running an outdated hook script inside their game directory.
-   - Fix: Whenever the web shows an update banner, re-download the latest `LiveSync_1Click.zip`, extract it, and run the batch installer to sync the newest hook script.
-
----
-
-[5. EXPLANATION OF CMD / BATCH COMMANDS (ENGLISH)]
-When users ask about the terminal commands or what the `.bat` files do:
-
-1. `start_game_with_sync.bat`:
-   - Runs `Genesis.exe` with `--remote-debugging-port=10998`.
-   - Purpose: Opens the internal V8 debugger port on localhost port 10998. This enables the web helper to connect safely via WebSocket, read real-time combat stats (DPS, ATK, Level), and send automation commands.
-
-2. `cai_dat_livesync.bat`:
-   - Injects `install_game_hook_v2.js` into the game's Puerts script folder in `AppData\LocalLow\Newnormal Soft\War of Genesis Idle Loot\scripts\src\`.
-   - Purpose: Installs internal automation helpers directly into the game's V8 engine.
-
-3. `watchdog_auto_reconnect.bat`:
-   - Runs a 15-second loop checking `tasklist | find /i "Genesis.exe"`. If the game process is missing (crashed or closed), it triggers `start steam://rungameid/3739940` to relaunch the game automatically.
-   - Purpose: 24/7 AFK farming protection against unexpected game crashes or memory leaks.
-
-4. Localhost Port 10998:
-   - A completely local, private loopback interface on your machine. No game data or account credentials are ever transmitted outside your computer.
+3. GIẢI THÍCH CÁC DÒNG LỆNH CMD / FILE SCRIPT BATCH (.BAT):
+- `start_game_with_sync.bat`: Mở game kèm cờ `--remote-debugging-port=10998` để mở cổng kết nối nội bộ cho Web Tool đọc thông số và hỗ trợ tự động mà không can thiệp mã độc.
+- `cai_dat_livesync.bat`: Tự động sao chép các file hook (`install_game_hook_v2.js`, `init.bundle.mjs`) vào thư mục Puerts của game (`AppData\LocalLow\Newnormal Soft\...`) để game hỗ trợ tự động hóa.
+- `watchdog_auto_reconnect.bat`: Bộ giám sát "chó canh gác" chạy ngầm, cứ 15 giây kiểm tra một lần. Nếu game crash hoặc bị tắt, nó tự động gọi Steam bật lại game để cày cuốc AFK 24/7.
+- Cổng `10998`: Cổng giao tiếp mạng nội bộ (localhost:10998) an toàn tuyệt đối trên máy tính người chơi, không gửi dữ liệu ra ngoài Internet.
