@@ -34,5 +34,4 @@ Chỉ hướng dẫn phần này khi người dùng hỏi về ngọc, cất kho
 🅳 TÌNH HUỐNG 4: GIẢI THÍCH DÒNG LỆNH CMD / FILE SCRIPT BATCH (.BAT):
 • `start_game_with_sync.bat`: Mở game kèm cổng kết nối nội bộ 10998 để Web Tool đọc thông số và gửi lệnh tự động an toàn.
 • `cai_dat_livesync.bat`: Tự động copy 3 file hook vào thư mục game một cách nhanh chóng.
-• `watchdog_auto_reconnect.bat`: "Chó canh gác" chạy ngầm, cứ 15 giây kiểm tra 1 lần. Nếu game bị văng hoặc tắt, nó tự gọi Steam mở lại game ngay để cày AFK 24/7.
 • Cổng `10998`: Cổng localhost nội bộ máy bạn, an toàn 100%, không gửi dữ liệu ra ngoài Internet.

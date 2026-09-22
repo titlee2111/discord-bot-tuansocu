@@ -29,7 +29,11 @@ class AIService:
             "   - Nếu người dùng hỏi về NGỌC / GHÉP ĐỒ / CẤT KHO (ngọc không vào rương, slot full...):\n"
             "     -> Mới hướng dẫn tắt 'Tự động ghép ngọc' (Auto-Fuse = Off) trong Cài đặt game.\n"
             "   - Nếu người dùng hỏi về DÒNG LỆNH CMD / FILE .BAT:\n"
-            "     -> Giải thích ngắn gọn tác dụng của file bat hoặc port 10998."
+            "     -> Giải thích ngắn gọn tác dụng của file bat hoặc port 10998.\n"
+            "6. LINK WEBSITE DUY NHẤT (CẤM BỊA LINK ẢO):\n"
+            "   - Link web chính thức duy nhất là: https://titlee2111.github.io/war-of-genesis-helper/\n"
+            "   - Gói LiveSync_1Click.zip được ghim và tải trực tiếp trên trang web này.\n"
+            "   - TUYỆT ĐỐI KHÔNG tự bịa ra bất kỳ tên miền giả nào (như wor-helper-tools.com, worrpamu.kr...)."
         )
         self.knowledge_file = knowledge_file
         self.knowledge_text = ""
@@ -68,6 +72,7 @@ class AIService:
                 f"{self.knowledge_text}\n\n"
                 "⚠️ LƯU Ý TỐI QUAN TRỌNG KHI TRẢ LỜI:\n"
                 "- TRẢ LỜI ĐÚNG TRỌNG TÂM: Hỏi lỗi kết nối -> trả lời về việc nhét 3 file vào thư mục game và cấp quyền Insecure Content trên trình duyệt (ổ khóa -> Allow -> F5). Hỏi lỗi ngọc -> trả lời tắt Auto-Fuse. Đừng trả lời lẫn lộn!\n"
+                "- LINK WEB DUY NHẤT: https://titlee2111.github.io/war-of-genesis-helper/ (CẤM BỊA LINK ẢO KHÁC).\n"
                 "- BẮT BUỘC TRẢ LỜI ĐÚNG THEO NGÔN NGỮ CỦA CÂU HỎI (User hỏi tiếng Anh -> Trả lời tiếng Anh; User hỏi tiếng Việt -> Trả lời tiếng Việt).\n"
                 "- Dùng lời nói tự nhiên của một người bạn/admin game thủ để trả lời.\n"
                 "- TUYỆT ĐỐI KHÔNG vẽ bảng kẻ cột (| # | Nguyên nhân | ... |), không dịch máy, không dùng từ ngữ sáo rỗng.\n"
