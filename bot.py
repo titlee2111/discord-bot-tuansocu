@@ -27,6 +27,7 @@ PREFIX = os.getenv("COMMAND_PREFIX", "!")
 SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT")
 UPDATE_CHANNEL_ID = int(os.getenv("UPDATE_CHANNEL_ID", "1548984360722501662"))
 GITHUB_REPO = os.getenv("GITHUB_REPO", "titlee2111/war-of-genesis-helper")
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "756393451527995453"))
 
 # Danh sách ID chủ bot / admin (Bot sẽ KHÔNG BAO GIỜ tự động rep khi họ nhắn tin trong server)
@@ -163,16 +164,21 @@ def save_github_state(state):
     except Exception as e:
         logger.error(f"Không thể lưu github_state.json: {e}")
 
-@tasks.loop(seconds=60)
+@tasks.loop(seconds=120)
 async def check_github_updates():
-    """Kiểm tra commit mới trên GitHub repository và gửi thông báo tự động"""
+    """Kiểm tra commit mới trên GitHub repository và gửi thông báo tự động (mỗi 2 phút)"""
     url = f"https://api.github.com/repos/{GITHUB_REPO}/commits?per_page=1"
     headers = {"User-Agent": "WoR-Helper-Bot"}
+    if GITHUB_TOKEN:
+        headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
 
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers, timeout=15) as resp:
-                if resp.status != 200:
+                if resp.status == 403:
+                    logger.warning("GitHub API bị giới hạn tần suất (403 Rate Limit). Sẽ kiểm tra lại ở chu kỳ tiếp theo.")
+                    return
+                elif resp.status != 200:
                     logger.warning(f"GitHub API trả về mã lỗi: {resp.status}")
                     return
                 data = await resp.json()
@@ -757,12 +763,35 @@ async def start_web_server():
         site = web.TCPSite(runner, "0.0.0.0", port)
         await site.start()
         logger.info(f"Đã bật Web Health Check Server trên cổng {port} (Hỗ trợ Render.com 24/7)")
+        return runner
     except Exception as e:
         logger.warning(f"Không thể bật web health server: {e}")
+        return None
+
+async def run_bot_with_retry():
+    retry_delay = 15
+    while True:
+        try:
+            logger.info("Đang đăng nhập vào Discord...")
+            await bot.start(TOKEN)
+        except discord.errors.HTTPException as e:
+            if e.status == 429:
+                logger.warning(
+                    f"⚠️ Discord báo lỗi 429 Too Many Requests: Cụm IP của Render đang bị Discord Cloudflare giới hạn tạm thời.\n"
+                    f"Web server vẫn đang mở trên cổng PORT để giữ Render luôn ở trạng thái Live.\n"
+                    f"Bot sẽ tự động thử kết nối lại sau {retry_delay} giây..."
+                )
+            else:
+                logger.error(f"Lỗi HTTPException khi kết nối Discord: {e}. Thử lại sau {retry_delay}s...")
+        except Exception as e:
+            logger.error(f"Lỗi khi chạy bot: {e}. Sẽ thử lại sau {retry_delay} giây...")
+        
+        await asyncio.sleep(retry_delay)
+        retry_delay = min(int(retry_delay * 1.5), 120)
 
 async def main():
     await start_web_server()
-    await bot.start(TOKEN)
+    await run_bot_with_retry()
 
 if __name__ == "__main__":
     logger.info("Đang khởi động bot Tuấn Sờ Cu...")
