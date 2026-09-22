@@ -557,9 +557,8 @@ async def slash_checkupdate(interaction: discord.Interaction):
 
 @bot.tree.command(name="reload", description="Cập nhật lại kiến thức mới nhất từ file kien_thuc.txt")
 async def slash_reload(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
     result = ai.load_knowledge()
-    await interaction.followup.send(f"🔄 **Cập nhật:** {result}")
+    await interaction.response.send_message(f"🔄 **Cập nhật:** {result}", ephemeral=True)
 
 @bot.tree.command(name="reset", description="Xóa lịch sử nhớ của bot trong kênh này")
 async def slash_reset(interaction: discord.Interaction):
@@ -575,20 +574,136 @@ async def slash_ping(interaction: discord.Interaction):
 async def slash_help(interaction: discord.Interaction):
     embed = discord.Embed(
         title="🤖 Menu Hướng Dẫn Bot Tuấn Sờ Cu",
-        description="Chào bạn! Dưới đây là các tính năng chính:",
+        description="Chào bạn! Dưới đây là các tính năng chính của bot:",
         color=discord.Color.blue()
     )
     embed.add_field(
-        name="Cách dùng",
+        name="💬 1. Hỗ Trợ & Trả Lời Thành Viên",
         value=(
-            "• Hỏi đáp tự do trong mọi kênh (bot tự nhận diện câu hỏi).\n"
-            "• Gửi ảnh chụp màn hình vào kênh (bot tự đọc chữ và phân tích lỗi).\n"
+            "• **Tự động hỗ trợ trong mọi kênh:** Nhận diện câu hỏi/báo lỗi và giải đáp cho thành viên.\n"
+            "• **Đọc ảnh (Vision AI):** Phân tích ảnh chụp màn hình game, lỗi CMD...\n"
+            "• **Ra lệnh trả lời 1 người ở kênh bất kỳ:**\n"
+            "  - Cách 1: Chuột phải vào tin nhắn ➔ **Apps** ➔ **Tuấn Trả Lời Tin Này**.\n"
+            "  - Cách 2: Dùng lệnh `/tra_loi kenh:#kênh nguoi_hoi:@user cau_hoi:...`"
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name="🚀 2. Tiện Ích Khác",
+        value=(
             "• Tự động đăng tin cập nhật GitHub vào kênh update-status.\n"
             "• `/summary <số lượng>` hoặc gõ `summary` để tóm tắt tin nhắn."
         ),
         inline=False
     )
     await interaction.response.send_message(embed=embed)
+
+# ==================== LỆNH ĐIỀU BOT TRẢ LỜI CHO 1 NGƯỜI Ở KÊNH CỤ THỂ ====================
+
+@bot.tree.context_menu(name="Tuấn Trả Lời Tin Này")
+async def context_reply_message(interaction: discord.Interaction, message: discord.Message):
+    """Chuột phải vào tin nhắn của bất kỳ ai trong bất kỳ kênh nào để bot trả lời tin nhắn đó"""
+    await interaction.response.defer(ephemeral=True)
+    try:
+        author_name = message.author.display_name
+        target_channel = message.channel
+
+        # 1. Kiểm tra nếu tin nhắn có đính kèm ảnh (ảnh lỗi, màn hình game...)
+        image_attachment = None
+        for att in message.attachments:
+            if att.content_type and att.content_type.startswith("image/"):
+                image_attachment = att
+                break
+            elif any(att.filename.lower().endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".webp"]):
+                image_attachment = att
+                break
+
+        if image_attachment:
+            img_bytes = await image_attachment.read()
+            content_type = image_attachment.content_type or "image/png"
+            reply_text = await ai.analyze_image(
+                image_bytes=img_bytes,
+                content_type=content_type,
+                user_prompt=message.content,
+                user_name=author_name
+            )
+        else:
+            prompt = message.content.strip()
+            if not prompt:
+                await interaction.followup.send("⚠️ Tin nhắn này không có nội dung văn bản hoặc hình ảnh để trả lời.", ephemeral=True)
+                return
+            reply_text = await ai.get_response(target_channel.id, prompt, author_name)
+
+        chunks = split_message(reply_text)
+        for i, chunk in enumerate(chunks):
+            if i == 0:
+                await message.reply(chunk, mention_author=True)
+            else:
+                await target_channel.send(chunk)
+
+        await interaction.followup.send(
+            f"✅ Đã ra lệnh thành công! Bot đã trả lời tin nhắn của **{author_name}** tại kênh {target_channel.mention}!",
+            ephemeral=True
+        )
+    except Exception as e:
+        logger.error(f"Lỗi context_reply_message: {e}")
+        await interaction.followup.send(f"❌ Có lỗi khi ra lệnh cho bot trả lời: {e}", ephemeral=True)
+
+@bot.tree.command(name="tra_loi", description="Ra lệnh cho bot trả lời thắc mắc của một người ở một kênh chat cụ thể")
+@app_commands.describe(
+    kenh="Kênh chat muốn bot gửi câu trả lời (ví dụ: #vietnam-chat, #english-chat)",
+    nguoi_hoi="Thành viên bạn muốn bot giải đáp cho họ (tag @user)",
+    cau_hoi="Nội dung câu hỏi cần giải đáp (hoặc dán link tin nhắn của họ)"
+)
+async def slash_answer(
+    interaction: discord.Interaction,
+    kenh: discord.TextChannel,
+    nguoi_hoi: discord.Member,
+    cau_hoi: str
+):
+    await interaction.response.defer(ephemeral=True)
+    try:
+        target_message = None
+        prompt_text = cau_hoi.strip()
+
+        # Kiểm tra nếu người dùng dán link tin nhắn Discord
+        link_pattern = r'discord(?:app)?\.com/channels/\d+/(\d+)/(\d+)'
+        match = re.search(link_pattern, prompt_text)
+        if match:
+            src_ch_id, src_msg_id = int(match.group(1)), int(match.group(2))
+            source_ch = bot.get_channel(src_ch_id)
+            if source_ch:
+                try:
+                    target_message = await source_ch.fetch_message(src_msg_id)
+                    prompt_text = target_message.content
+                except Exception:
+                    pass
+
+        author_name = nguoi_hoi.display_name
+        reply_text = await ai.get_response(kenh.id, prompt_text, author_name)
+        chunks = split_message(reply_text)
+
+        # Gửi vào kênh được chỉ định
+        if target_message and target_message.channel.id == kenh.id:
+            for i, chunk in enumerate(chunks):
+                if i == 0:
+                    await target_message.reply(f"{nguoi_hoi.mention}\n{chunk}", mention_author=True)
+                else:
+                    await kenh.send(chunk)
+        else:
+            for i, chunk in enumerate(chunks):
+                if i == 0:
+                    await kenh.send(f"{nguoi_hoi.mention}\n{chunk}")
+                else:
+                    await kenh.send(chunk)
+
+        await interaction.followup.send(
+            f"✅ Đã ra lệnh thành công! Bot đã trả lời **{author_name}** tại kênh {kenh.mention}.",
+            ephemeral=True
+        )
+    except Exception as e:
+        logger.error(f"Lỗi slash_answer: {e}")
+        await interaction.followup.send(f"❌ Có lỗi khi ra lệnh cho bot: {e}", ephemeral=True)
 
 async def start_web_server():
     port = int(os.environ.get("PORT", 8080))
