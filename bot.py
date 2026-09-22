@@ -127,6 +127,35 @@ def load_github_state():
             pass
     return {}
 
+def clean_commit_message(raw_msg: str) -> str:
+    """Lọc bỏ các dòng generic như 'Add files via upload', lấy nội dung chi tiết thực tế"""
+    if not raw_msg:
+        return "Cập nhật và tối ưu hóa hệ thống Web Helper."
+    
+    lines = [line.strip() for line in raw_msg.splitlines()]
+    filtered = []
+    for line in lines:
+        if line.lower() in ["add files via upload", "upload files", "update"]:
+            continue
+        if line:
+            filtered.append(line)
+    
+    if filtered:
+        return "\n".join(filtered)
+    return "Cập nhật và tối ưu hóa hệ thống Web Helper."
+
+async def is_commit_already_posted(channel: discord.TextChannel, sha_short: str) -> bool:
+    """Kiểm tra xem commit SHA này đã từng được bot thông báo trong kênh chưa"""
+    try:
+        async for msg in channel.history(limit=15):
+            if msg.author == bot.user and msg.embeds:
+                for emb in msg.embeds:
+                    if sha_short in (emb.description or "") or sha_short in str(emb.to_dict()):
+                        return True
+    except Exception as e:
+        logger.warning(f"Lỗi kiểm tra lịch sử kênh: {e}")
+    return False
+
 def save_github_state(state):
     try:
         with open(STATE_FILE, "w", encoding="utf-8") as f:
@@ -159,41 +188,49 @@ async def check_github_updates():
 
                 state = load_github_state()
                 last_sha = state.get("last_sha")
+                channel = bot.get_channel(UPDATE_CHANNEL_ID)
 
-                if not last_sha:
-                    # Lần chạy đầu tiên: chỉ lưu lại SHA hiện tại
+                # Kiểm tra xem commit này đã được thông báo trong kênh chưa
+                already_posted = False
+                if channel:
+                    already_posted = await is_commit_already_posted(channel, sha[:7])
+
+                should_announce = False
+                if sha != last_sha and not already_posted:
+                    should_announce = True
+
+                if should_announce:
+                    # Phát hiện commit mới cần đăng!
+                    logger.info(f"Phát hiện bản cập nhật mới trên GitHub: {sha[:7]}")
                     state["last_sha"] = sha
                     state["last_date"] = date_str
                     save_github_state(state)
-                    logger.info(f"Đã khởi tạo theo dõi GitHub tại commit {sha[:7]}")
-                    return
 
-                if sha != last_sha:
-                    # Phát hiện commit mới!
-                    logger.info(f"Phát hiện bản cập nhật mới trên GitHub: {sha[:7]} - {commit_msg}")
-                    state["last_sha"] = sha
-                    state["last_date"] = date_str
-                    save_github_state(state)
-
-                    channel = bot.get_channel(UPDATE_CHANNEL_ID)
                     if channel:
+                        cleaned_msg = clean_commit_message(commit_msg)
                         embed = discord.Embed(
                             title="🚀 THÔNG BÁO CẬP NHẬT WEB MỚI TRÊN GITHUB!",
                             description=(
                                 f"Web **WoR Helper Tools** vừa được tác giả cập nhật phiên bản mới!\n\n"
-                                f"**📝 Nội dung cập nhật:**\n```{commit_msg.strip()}```\n"
+                                f"**📝 Nội dung cập nhật:**\n{cleaned_msg}\n\n"
                                 f"**🔗 Chi tiết commit:** [`{sha[:7]}`]({commit_url})\n"
                                 f"**👤 Người cập nhật:** `{author}`\n"
                                 f"**🌐 Trang Web:** https://titlee2111.github.io/war-of-genesis-helper/\n\n"
                                 f"⚠️ **LƯU Ý QUAN TRỌNG CHO ANH EM:**\n"
-                                f"Nếu bản cập nhật có liên quan đến tính năng bot/lò rèn/LiveSync, anh em hãy tải lại gói **`LiveSync_1Click.zip`** mới nhất và chạy file cài đặt lại để đồng bộ các tính năng mới vào game nhé!"
+                                f"Nếu bản cập nhật có liên quan đến tính năng bot/lò rèn/LiveSync, anh em hãy vào lại trang web để tải gói **`LiveSync_1Click.zip`** mới nhất và cài đặt lại vào game nhé!"
                             ),
                             color=discord.Color.green()
                         )
                         embed.set_footer(text=f"GitHub: {GITHUB_REPO} • Tự động cập nhật bởi Tuấn Sờ Cu")
-                        await channel.send(embed=embed)
+                        await channel.send(content="@everyone", embed=embed)
+                        logger.info(f"Đã gửi thông báo cập nhật commit {sha[:7]} kèm tag @everyone vào kênh {UPDATE_CHANNEL_ID}")
                     else:
                         logger.warning(f"Không tìm thấy kênh thông báo ID: {UPDATE_CHANNEL_ID}")
+                else:
+                    if sha != last_sha:
+                        state["last_sha"] = sha
+                        state["last_date"] = date_str
+                        save_github_state(state)
 
     except Exception as e:
         logger.error(f"Lỗi khi kiểm tra GitHub updates: {e}")
