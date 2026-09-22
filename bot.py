@@ -27,6 +27,14 @@ PREFIX = os.getenv("COMMAND_PREFIX", "!")
 SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT")
 UPDATE_CHANNEL_ID = int(os.getenv("UPDATE_CHANNEL_ID", "1548984360722501662"))
 GITHUB_REPO = os.getenv("GITHUB_REPO", "titlee2111/war-of-genesis-helper")
+BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "756393451527995453"))
+
+# Danh sách ID chủ bot / admin (Bot sẽ KHÔNG BAO GIỜ tự động rep khi họ nhắn tin trong server)
+IGNORED_USER_IDS = {BOT_OWNER_ID, 756393451527995453}
+extra_admins = os.getenv("ADMIN_IDS", "")
+for adm in extra_admins.split(","):
+    if adm.strip().isdigit():
+        IGNORED_USER_IDS.add(int(adm.strip()))
 
 if not TOKEN:
     logger.error("Lỗi: Không tìm thấy DISCORD_TOKEN trong file .env!")
@@ -249,6 +257,15 @@ async def on_ready():
     logger.info("=== Bot Tuấn Sờ Cu đã Online thành công! ===")
     logger.info(f"Tên bot: {bot.user} (ID: {bot.user.id})")
     
+    # Tự động nhận diện chủ sở hữu bot
+    try:
+        app = await bot.application_info()
+        if app.owner:
+            IGNORED_USER_IDS.add(app.owner.id)
+            logger.info(f"Đã nhận diện chủ bot: {app.owner.name} (ID: {app.owner.id}) - Bot sẽ KHÔNG BAO GIỜ tự động rep tin nhắn của chủ bot.")
+    except Exception as e:
+        logger.warning(f"Không thể đọc thông tin chủ bot: {e}")
+
     activity = discord.Activity(
         type=discord.ActivityType.listening,
         name=f"tag @{bot.user.name} hoặc hỏi đáp trong kênh"
@@ -275,6 +292,13 @@ async def on_message(message: discord.Message):
 
     content_clean = message.content.strip()
     content_lower = content_clean.lower()
+
+    # KHÔNG BAO GIỜ TỰ ĐỘNG REP KHI CHỦ BOT / ADMIN NHẮN TIN TRONG SERVER
+    if message.author.id in IGNORED_USER_IDS:
+        # Nếu chủ bot chủ động gõ lệnh có tiền tố (!chat, !summary, !ping...) thì vẫn thực thi
+        if content_clean.startswith(PREFIX):
+            await bot.process_commands(message)
+        return
 
     # Bỏ qua nếu tin nhắn bắt đầu bằng prefix lệnh
     if content_clean.startswith(PREFIX):

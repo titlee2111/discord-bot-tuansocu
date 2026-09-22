@@ -22,7 +22,14 @@ class AIService:
             "   - Khi người dùng hỏi một lỗi, không chép lại cả cuốn giáo trình. Hãy nêu ngay 2 - 3 nguyên nhân hay gặp nhất và cách giải quyết bằng các bước ngắn gọn.\n"
             "4. ĐÚNG NGÔN NGỮ (LANGUAGE MATCHING):\n"
             "   - Nếu người dùng hỏi bằng tiếng Anh -> BẮT BUỘC trả lời 100% bằng tiếng Anh tự nhiên, thân thiện (friendly gamer tone, call them 'bro' or 'mate', punchy bullet points, NO tables).\n"
-            "   - Nếu người dùng hỏi bằng tiếng Việt -> Trả lời tiếng Việt tự nhiên (xưng Tuấn/mình, gọi bác/bạn/anh em)."
+            "   - Nếu người dùng hỏi bằng tiếng Việt -> Trả lời tiếng Việt tự nhiên (xưng Tuấn/mình, gọi bác/bạn/anh em).\n"
+            "5. ĐÚNG TRỌNG TÂM VẤN ĐỀ ĐƯỢC HỎI (QUAN TRỌNG NHẤT):\n"
+            "   - Nếu người dùng hỏi về KẾT NỐI (không kết nối được, web báo Disconnected, không nhận game, không đồng bộ...):\n"
+            "     -> Tập trung NGAY vào 2 nguyên nhân cốt lõi: (1) Chưa nhét đủ 3 file script trên web vào thư mục game, và (2) Chưa bấm biểu tượng ổ khóa/Tune cạnh link web để đổi 'Nội dung không an toàn' (Insecure content) sang 'Cho phép' (Allow) rồi F5 lại web. TUYỆT ĐỐI KHÔNG nói về lỗi ghép ngọc khi người ta hỏi lỗi kết nối!\n"
+            "   - Nếu người dùng hỏi về NGỌC / GHÉP ĐỒ / CẤT KHO (ngọc không vào rương, slot full...):\n"
+            "     -> Mới hướng dẫn tắt 'Tự động ghép ngọc' (Auto-Fuse = Off) trong Cài đặt game.\n"
+            "   - Nếu người dùng hỏi về DÒNG LỆNH CMD / FILE .BAT:\n"
+            "     -> Giải thích ngắn gọn tác dụng của file bat hoặc port 10998."
         )
         self.knowledge_file = knowledge_file
         self.knowledge_text = ""
@@ -60,6 +67,7 @@ class AIService:
                 "\n\n[DỮ LIỆU THAM KHẢO]:\n"
                 f"{self.knowledge_text}\n\n"
                 "⚠️ LƯU Ý TỐI QUAN TRỌNG KHI TRẢ LỜI:\n"
+                "- TRẢ LỜI ĐÚNG TRỌNG TÂM: Hỏi lỗi kết nối -> trả lời về việc nhét 3 file vào thư mục game và cấp quyền Insecure Content trên trình duyệt (ổ khóa -> Allow -> F5). Hỏi lỗi ngọc -> trả lời tắt Auto-Fuse. Đừng trả lời lẫn lộn!\n"
                 "- BẮT BUỘC TRẢ LỜI ĐÚNG THEO NGÔN NGỮ CỦA CÂU HỎI (User hỏi tiếng Anh -> Trả lời tiếng Anh; User hỏi tiếng Việt -> Trả lời tiếng Việt).\n"
                 "- Dùng lời nói tự nhiên của một người bạn/admin game thủ để trả lời.\n"
                 "- TUYỆT ĐỐI KHÔNG vẽ bảng kẻ cột (| # | Nguyên nhân | ... |), không dịch máy, không dùng từ ngữ sáo rỗng.\n"
@@ -97,28 +105,35 @@ class AIService:
 
         url = "https://text.pollinations.ai/"
 
-        try:
-            timeout = aiohttp.ClientTimeout(total=45)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(url, json=payload) as resp:
-                    if resp.status == 200:
-                        reply = await resp.text()
-                        reply = reply.strip()
-                        if reply:
-                            history.append({"role": "user", "content": f"{user_name}: {user_message}"})
-                            history.append({"role": "assistant", "content": reply})
-                            if len(history) > self.max_history * 2:
-                                self.conversations[channel_id] = history[-self.max_history * 2:]
-                            return reply
-                    else:
-                        error_text = await resp.text()
-                        logger.error(f"AI API error {resp.status}: {error_text}")
-                        return f"Ui da, máy chủ AI đang báo lỗi (Mã: {resp.status}). Bác thử lại xíu nha!"
-        except Exception as e:
-            logger.error(f"Error calling AI API: {e}")
-            return "Ui lag quá, mình chưa kịp load câu trả lời. Bác thử hỏi lại xem sao nha!"
+        for attempt in range(2):
+            try:
+                timeout = aiohttp.ClientTimeout(total=35)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.post(url, json=payload) as resp:
+                        if resp.status == 200:
+                            reply = await resp.text()
+                            reply = reply.strip()
+                            if reply:
+                                history.append({"role": "user", "content": f"{user_name}: {user_message}"})
+                                history.append({"role": "assistant", "content": reply})
+                                if len(history) > self.max_history * 2:
+                                    self.conversations[channel_id] = history[-self.max_history * 2:]
+                                return reply
+                        elif attempt == 0:
+                            await asyncio.sleep(1.5)
+                            continue
+                        else:
+                            error_text = await resp.text()
+                            logger.error(f"AI API error {resp.status}: {error_text}")
+                            return f"Ui da, máy chủ AI đang báo lỗi (Mã: {resp.status}). Bác thử lại xíu nha!"
+            except Exception as e:
+                logger.error(f"Error calling AI API (attempt {attempt+1}): {e}")
+                if attempt == 0:
+                    await asyncio.sleep(1.5)
+                    continue
+                return "Ui lag quá, mình chưa kịp load câu trả lời. Bác thử hỏi lại xem sao nha!"
 
-        return "Tuấn Sờ Cu đang ngơ ngác, chưa nghĩ ra câu trả lời. Hỏi lại phát nữa nào!"
+        return "Tuấn Sờ Cu đang ngơ ngác, chưa nghĩ ra câu trả lời. Bác hỏi lại phát nữa nào!"
 
     async def analyze_image(self, image_bytes: bytes, content_type: str, user_prompt: str, user_name: str = "User") -> str:
         """Đọc và phân tích hình ảnh (ảnh chụp màn hình game, lỗi CMD, giao diện) bằng Vision AI Model"""
