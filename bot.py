@@ -30,6 +30,11 @@ GITHUB_REPO = os.getenv("GITHUB_REPO", "titlee2111/war-of-genesis-helper")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "756393451527995453"))
 
+# Server The Dark Knight — bot sẽ vào vai Tuấn Sờ Cu người thật
+DARK_KNIGHT_GUILD_ID = int(os.getenv("DARK_KNIGHT_GUILD_ID", "1296159555679686676"))
+# Xác suất bot tự động rep mỗi tin nhắn trong DK server (0.0 - 1.0), mặc định 70%
+DK_REPLY_CHANCE = float(os.getenv("DK_REPLY_CHANCE", "0.7"))
+
 # Danh sách ID chủ bot / admin (Bot sẽ KHÔNG BAO GIỜ tự động rep khi họ nhắn tin trong server)
 IGNORED_USER_IDS = {BOT_OWNER_ID, 756393451527995453}
 extra_admins = os.getenv("ADMIN_IDS", "")
@@ -52,6 +57,8 @@ ai = AIService(base_system_prompt=SYSTEM_PROMPT, knowledge_file="kien_thuc.txt")
 
 # Bộ đệm thời gian chống spam khi tự động trả lời trong kênh
 channel_last_reply = {}
+# Bộ đệm cooldown riêng cho Dark Knight server
+dk_last_reply = {}
 STATE_FILE = os.path.join(os.path.dirname(__file__), "github_state.json")
 
 def split_message(content: str, max_length: int = 1900):
@@ -91,14 +98,32 @@ def is_user_inquiry(content: str) -> bool:
 
     # Dấu hiệu 2: Các từ khóa hỏi đáp / báo lỗi Tiếng Việt
     vi_keywords = [
+        # Hỏi
         "tại sao", "sao lại", "làm sao", "làm thế nào", "như thế nào",
-        "sao k", "sao không", "sao ko", "sao chưa", "sao bị",
+        "sao k", "sao không", "sao ko", "sao chưa", "sao bị", "sao vậy",
         "cho hỏi", "cho mình hỏi", "cho em hỏi", "ai biết", "có ai biết",
         "chỉ mình", "chỉ em", "hướng dẫn", "giúp mình", "giúp em", "cứu",
-        "bị lỗi", "lỗi gì", "lỗi này", "k được", "không được", "ko đc", "k đc",
+        "cách nào", "có cách", "biết cách", "thử cách",
+        # Báo lỗi / kết nối
+        "bị lỗi", "lỗi gì", "lỗi này", "lỗi r", "lỗi rồi",
+        "k được", "không được", "ko đc", "k đc", "không đc",
+        "k lên", "không lên", "ko lên", "k chạy", "không chạy", "ko chạy",
+        "k kết nối", "không kết nối", "ko kết nối",
+        "k nhận", "không nhận", "ko nhận",
+        "k hoạt động", "không hoạt động",
         "bị kẹt", "bị đơ", "văng game", "crash", "mất mạng", "dis mạng",
-        "ghép đồ", "ghép ngọc", "livesync", "watchdog", "cmd", "script",
-        "kho đầy", "cất kho", "xung đột", "không nhận"
+        "bị dis", "disconnect", "disconnected",
+        "web không", "web k ", "trang web",
+        # Tính năng game/tool
+        "ghép đồ", "ghép ngọc", "livesync", "live sync", "watchdog",
+        "cmd", "script", "file bat", ".bat", ".js",
+        "kho đầy", "cất kho", "xung đột", "không nhận",
+        "ải", "afk", "auto", "tự động",
+        "cài đặt", "cài lại", "reinstall", "setup",
+        "port", "10998",
+        # Kết quả xấu
+        "failed", "fail", "error", "không thấy", "mất rồi", "biến mất",
+        "không hiện", "k hiện", "ko hiện",
     ]
     for kw in vi_keywords:
         if kw in text:
@@ -107,13 +132,28 @@ def is_user_inquiry(content: str) -> bool:
     # Dấu hiệu 3: Các từ khóa hỏi đáp / báo lỗi Tiếng Anh (English)
     en_keywords = [
         "why", "how to", "how do", "how can", "what is", "where is",
-        "not working", "cant", "can't", "cannot", "issue", "error", "bug",
-        "failing", "failed", "crash", "disconnect", "please help", "anyone know",
-        "auto fuse", "live sync", "livesync", "watchdog", "cmd"
+        "not working", "doesnt work", "doesn't work", "wont work", "won't work",
+        "cant", "can't", "cannot", "issue", "error", "bug",
+        "failing", "failed", "crash", "disconnect", "disconnected",
+        "please help", "anyone know", "help me", "need help",
+        "auto fuse", "live sync", "livesync", "watchdog", "cmd",
+        "not connecting", "not loading", "not showing",
     ]
     for kw in en_keywords:
         if re.search(r'\b' + re.escape(kw) + r'\b', text):
             return True
+
+    # Dấu hiệu 4: Tin nhắn ngắn kiểu "lỗi r", "k lên", "sao vậy" (4-25 ký tự, không phải chào hỏi)
+    greeting_words = {"hi", "hello", "chào", "hey", "ok", "oke", "okay", "thanks", "cảm ơn", "camon", "haha", "lol"}
+    if len(text) <= 25:
+        for gw in greeting_words:
+            if text.strip() == gw or text.strip().startswith(gw + " "):
+                return False
+        # Tin nhắn ngắn chứa từ tiêu cực / hành động → có thể là báo lỗi
+        short_signals = ["lỗi", "lag", "out", "k vô", "vô k", "sao", "hả", "hả", "heh", "bị"]
+        for sig in short_signals:
+            if sig in text:
+                return True
 
     return False
 
@@ -347,6 +387,60 @@ async def on_message(message: discord.Message):
     if content_clean.startswith(PREFIX):
         await bot.process_commands(message)
         return
+
+    # =====================================================================
+    # ⚔️  SERVER THE DARK KNIGHT — BOT VÀO VAI TUẤN SỜ CU NGƯỜI THẬT
+    # =====================================================================
+    is_dk_server = (
+        message.guild is not None and
+        message.guild.id == DARK_KNIGHT_GUILD_ID and
+        isinstance(message.channel, discord.TextChannel)
+    )
+
+    if is_dk_server and content_clean:
+        import random
+        is_mentioned_dk = bot.user.mentioned_in(message) and not message.mention_everyone
+        now = time.time()
+        ch_id = message.channel.id
+
+        # Cooldown chống spam: luôn rep khi bị tag, ngẫu nhiên 70% + cooldown 6s khi không tag
+        should_reply_dk = False
+        if is_mentioned_dk:
+            should_reply_dk = True
+        elif random.random() < DK_REPLY_CHANCE:
+            last_t = dk_last_reply.get(ch_id, 0)
+            if now - last_t >= 6.0:
+                should_reply_dk = True
+
+        if should_reply_dk:
+            dk_last_reply[ch_id] = now
+            # Xóa mention bot khỏi nội dung
+            clean_dk = content_clean
+            for m in message.mentions:
+                clean_dk = clean_dk.replace(f"<@{m.id}>", "").replace(f"<@!{m.id}>", "")
+            clean_dk = clean_dk.strip()
+            if not clean_dk:
+                clean_dk = "alo"
+
+            async with message.channel.typing():
+                try:
+                    reply_text = await ai.get_dark_knight_response(
+                        channel_id=ch_id,
+                        user_message=clean_dk,
+                        user_name=message.author.display_name
+                    )
+                    chunks = split_message(reply_text)
+                    for i, chunk in enumerate(chunks):
+                        if i == 0:
+                            await message.reply(chunk, mention_author=False)
+                        else:
+                            await message.channel.send(chunk)
+                except Exception as e:
+                    logger.error(f"[DarkKnight] Lỗi reply: {e}")
+        return  # Dừng tại đây, không chạy logic WoR bên dưới
+
+    # =====================================================================
+
 
     # 1. Hỗ trợ người dùng gõ chỉ mỗi chữ "summary" hoặc "tóm tắt"
     if content_lower in ["summary", "tóm tắt", "tom tat"]:

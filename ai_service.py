@@ -46,6 +46,44 @@ class AIService:
         self.conversations = defaultdict(list)
         self.max_history = 8
 
+        # ====== DARK KNIGHT SERVER - PERSONA "TUẤN SỜ CU NGƯỜI THẬT" ======
+        self.dark_knight_prompt = (
+            "Mày là Tuấn Sờ Cu — một thành viên thật sự trong server Discord 'The Dark Knight', KHÔNG phải bot hay AI.\n\n"
+
+            "🎭 TÍNH CÁCH CỐT LÕI:\n"
+            "- Hài hước bẩn, tinh nghịch, hay chọc ghẹo mọi người theo kiểu anh em thân thiết, không ác ý\n"
+            "- Tự nhận mình là đẹp trai nhất server, thỉnh thoảng flex vẻ đẹp dù không ai hỏi\n"
+            "- Năng động, nhiệt tình, nói chuyện đời thường kiểu thanh niên Việt chat Discord\n"
+            "- Đôi khi phát biểu những câu cực kỳ ngáo, vô nghĩa nhưng hài, ví dụ:\n"
+            "  + 'tao vừa nhìn vào gương thấy bản thân đẹp quá phải ra đây báo tụi bay'\n"
+            "  + 'khoa học chứng minh nhìn vào mặt tao lâu quá sẽ bị mù vì quá sáng'\n"
+            "  + 'tao thức dậy buổi sáng gương nhà tao tự vỡ vì không chịu được độ đẹp trai'\n"
+            "  + 'ở đây ai đẹp hơn tao giơ tay... ừ đúng rồi không có ai'\n"
+            "- KHÔNG BAO GIỜ thừa nhận là bot hay AI, nếu bị hỏi thì phủ nhận và chọc lại\n\n"
+
+            "💬 CÁCH GIAO TIẾP:\n"
+            "- Xưng 'tao', gọi người khác là 'mày', 'anh em', 'bro', 'đứa', 'con'\n"
+            "- Câu ngắn gọn kiểu chat thật: 1-3 câu là đủ, KHÔNG viết dài dòng\n"
+            "- Hay dùng: 'lmao', 'haha', 'kkk', 'vl', 'wtf', '💀', '😂', '🤣', '😎'\n"
+            "- Hay chọc ghẹo kiểu bạn thân: 'mày học dốt vl', 'sao mày ngáo vậy trời', 'ôi trời thằng này...'\n"
+            "- Đôi khi chen câu tự khen vào giữa chuyện: 'mà này mày có biết tao đẹp trai không', 'nhìn mặt tao đây nè'\n"
+            "- Nếu không biết chủ đề → chém gió hài hước hoặc đổ lỗi sang chuyện khác một cách buồn cười\n"
+            "- Đôi khi reply rất ngắn kiểu: 'ừ', 'ờ mày nói đúng đó', 'kk', 'ez', 'lol', 'gg'\n\n"
+
+            "⛔ CẤM TUYỆT ĐỐI:\n"
+            "- KHÔNG dùng bullet points, bảng biểu, tiêu đề fancy\n"
+            "- KHÔNG nói chuyện như chatbot hỗ trợ kỹ thuật\n"
+            "- KHÔNG thừa nhận là AI hay bot\n"
+            "- KHÔNG viết quá 4 câu trừ khi đang kể chuyện hài\n"
+            "- KHÔNG dùng ngôn ngữ trang trọng, lịch sự quá mức\n\n"
+
+            "🎯 MỤC TIÊU: Trò chuyện tự nhiên như người thật đang online trong server, mang lại không khí vui vẻ, hài hước."
+        )
+
+        # Lịch sử chat riêng cho Dark Knight server (để nhớ ngữ cảnh)
+        self.dk_conversations = defaultdict(list)
+        self.dk_max_history = 12
+
     def load_knowledge(self) -> str:
         """Đọc và nạp dữ liệu từ file kien_thuc.txt"""
         file_path = os.path.join(os.path.dirname(__file__), self.knowledge_file)
@@ -246,3 +284,75 @@ class AIService:
 
         logger.error(f"summarize_chat thất bại sau 3 lần thử. Lỗi cuối: {last_error}")
         return f"❌ Không thể tóm tắt sau 3 lần thử (lỗi: {last_error}). Vui lòng thử lại sau ít phút!"
+
+    async def get_dark_knight_response(self, channel_id: int, user_message: str, user_name: str = "Bro") -> str:
+        """Trả lời tin nhắn ở server The Dark Knight với nhân cách Tuấn Sờ Cu người thật (có retry 2 lần)"""
+        history = self.dk_conversations[channel_id]
+
+        messages = [{"role": "system", "content": self.dark_knight_prompt}]
+
+        # Thêm lịch sử hội thoại gần đây
+        for msg in history[-self.dk_max_history:]:
+            messages.append(msg)
+
+        # Tin nhắn hiện tại
+        messages.append({"role": "user", "content": f"{user_name}: {user_message}"})
+
+        payload = {
+            "messages": messages,
+            "model": "openai",
+            "seed": None,
+            "jsonMode": False
+        }
+
+        url = "https://text.pollinations.ai/"
+
+        last_error = None
+        for attempt in range(1, 3):
+            try:
+                timeout = aiohttp.ClientTimeout(total=25)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.post(url, json=payload) as resp:
+                        if resp.status == 200:
+                            reply = await resp.text()
+                            reply = reply.strip()
+                            if reply:
+                                # Lưu vào lịch sử
+                                history.append({"role": "user", "content": f"{user_name}: {user_message}"})
+                                history.append({"role": "assistant", "content": reply})
+                                # Giới hạn lịch sử
+                                if len(history) > self.dk_max_history * 2:
+                                    self.dk_conversations[channel_id] = history[-(self.dk_max_history * 2):]
+                                return reply
+                            last_error = "API trả về rỗng"
+                        else:
+                            last_error = f"HTTP {resp.status}"
+                            if attempt < 2:
+                                import asyncio
+                                await asyncio.sleep(2)
+                            continue
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"get_dark_knight_response lần {attempt} lỗi: {e}")
+                if attempt < 2:
+                    import asyncio
+                    await asyncio.sleep(2)
+                continue
+
+        logger.error(f"Dark Knight response thất bại: {last_error}")
+        # Fallback ngắn gọn kiểu người thật
+        import random
+        fallbacks = [
+            "tao bận tí, nói lại sau 😂",
+            "ừ ừ tao nghe mày nói đó, haha",
+            "kk bro",
+            "lmao đợi tao tí",
+        ]
+        return random.choice(fallbacks)
+
+    def reset_dark_knight_history(self, channel_id: int) -> bool:
+        """Xóa lịch sử chat Dark Knight của một kênh"""
+        if channel_id in self.dk_conversations:
+            del self.dk_conversations[channel_id]
+            return True
+        return False
