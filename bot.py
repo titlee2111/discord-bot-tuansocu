@@ -25,9 +25,7 @@ load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 PREFIX = os.getenv("COMMAND_PREFIX", "!")
 SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT")
-UPDATE_CHANNEL_ID = int(os.getenv("UPDATE_CHANNEL_ID", "1548984360722501662"))
-GITHUB_REPO = os.getenv("GITHUB_REPO", "titlee2111/war-of-genesis-helper")
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
+
 BOT_OWNER_ID = int(os.getenv("BOT_OWNER_ID", "756393451527995453"))
 
 # Server The Dark Knight — bot sẽ vào vai Tuấn Sờ Cu người thật
@@ -59,7 +57,6 @@ ai = AIService(base_system_prompt=SYSTEM_PROMPT, knowledge_file="kien_thuc.txt")
 channel_last_reply = {}
 # Bộ đệm cooldown riêng cho Dark Knight server
 dk_last_reply = {}
-STATE_FILE = os.path.join(os.path.dirname(__file__), "github_state.json")
 
 def split_message(content: str, max_length: int = 1900):
     """Chia nhỏ tin nhắn nếu dài hơn giới hạn của Discord"""
@@ -84,6 +81,25 @@ def split_message(content: str, max_length: int = 1900):
     if current_chunk.strip():
         chunks.append(current_chunk.strip())
     return chunks
+
+async def fetch_recent_context(channel, before_message=None, limit: int = 8) -> list:
+    """Lấy danh sách các tin nhắn gần nhất trong kênh để nạp ngữ cảnh cho Tuấn Sờ Cu chém gió khớp chủ đề"""
+    context = []
+    if not isinstance(channel, (discord.TextChannel, discord.Thread)):
+        return context
+    try:
+        kwargs = {"limit": limit}
+        if before_message:
+            kwargs["before"] = before_message
+        async for msg in channel.history(**kwargs):
+            text = msg.clean_content.strip()
+            if text and not text.startswith(PREFIX):
+                sender = "Tuấn Sờ Cu" if msg.author == bot.user else msg.author.display_name
+                context.append(f"{sender}: {text}")
+        context.reverse()
+    except Exception as e:
+        logger.debug(f"Không thể đọc ngữ cảnh kênh {channel.id}: {e}")
+    return context
 
 def is_user_inquiry(content: str) -> bool:
     """Nhận diện xem tin nhắn có phải là một thắc mắc / câu hỏi cần giải đáp hay không"""
@@ -113,14 +129,9 @@ def is_user_inquiry(content: str) -> bool:
         "k hoạt động", "không hoạt động",
         "bị kẹt", "bị đơ", "văng game", "crash", "mất mạng", "dis mạng",
         "bị dis", "disconnect", "disconnected",
-        "web không", "web k ", "trang web",
-        # Tính năng game/tool
-        "ghép đồ", "ghép ngọc", "livesync", "live sync", "watchdog",
-        "cmd", "script", "file bat", ".bat", ".js",
-        "kho đầy", "cất kho", "xung đột", "không nhận",
-        "ải", "afk", "auto", "tự động",
+        # Hoạt động chung / thắc mắc
+        "ải", "kèo", "solo", "leo rank",
         "cài đặt", "cài lại", "reinstall", "setup",
-        "port", "10998",
         # Kết quả xấu
         "failed", "fail", "error", "không thấy", "mất rồi", "biến mất",
         "không hiện", "k hiện", "ko hiện",
@@ -136,7 +147,6 @@ def is_user_inquiry(content: str) -> bool:
         "cant", "can't", "cannot", "issue", "error", "bug",
         "failing", "failed", "crash", "disconnect", "disconnected",
         "please help", "anyone know", "help me", "need help",
-        "auto fuse", "live sync", "livesync", "watchdog", "cmd",
         "not connecting", "not loading", "not showing",
     ]
     for kw in en_keywords:
@@ -156,134 +166,6 @@ def is_user_inquiry(content: str) -> bool:
                 return True
 
     return False
-
-# ==================== GITHUB AUTO-UPDATE MONITOR ====================
-
-def load_github_state():
-    if os.path.exists(STATE_FILE):
-        try:
-            with open(STATE_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
-
-def clean_commit_message(raw_msg: str) -> str:
-    """Lọc bỏ các dòng generic như 'Add files via upload', lấy nội dung chi tiết thực tế"""
-    if not raw_msg:
-        return "Cập nhật và tối ưu hóa hệ thống Web Helper."
-    
-    lines = [line.strip() for line in raw_msg.splitlines()]
-    filtered = []
-    for line in lines:
-        if line.lower() in ["add files via upload", "upload files", "update"]:
-            continue
-        if line:
-            filtered.append(line)
-    
-    if filtered:
-        return "\n".join(filtered)
-    return "Cập nhật và tối ưu hóa hệ thống Web Helper."
-
-async def is_commit_already_posted(channel: discord.TextChannel, sha_short: str) -> bool:
-    """Kiểm tra xem commit SHA này đã từng được bot thông báo trong kênh chưa"""
-    try:
-        async for msg in channel.history(limit=15):
-            if msg.author == bot.user and msg.embeds:
-                for emb in msg.embeds:
-                    if sha_short in (emb.description or "") or sha_short in str(emb.to_dict()):
-                        return True
-    except Exception as e:
-        logger.warning(f"Lỗi kiểm tra lịch sử kênh: {e}")
-    return False
-
-def save_github_state(state):
-    try:
-        with open(STATE_FILE, "w", encoding="utf-8") as f:
-            json.dump(state, f, indent=2)
-    except Exception as e:
-        logger.error(f"Không thể lưu github_state.json: {e}")
-
-@tasks.loop(seconds=120)
-async def check_github_updates():
-    """Kiểm tra commit mới trên GitHub repository và gửi thông báo tự động (mỗi 2 phút)"""
-    url = f"https://api.github.com/repos/{GITHUB_REPO}/commits?per_page=1"
-    headers = {"User-Agent": "WoR-Helper-Bot"}
-    if GITHUB_TOKEN:
-        headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers, timeout=15) as resp:
-                if resp.status == 403:
-                    logger.warning("GitHub API bị giới hạn tần suất (403 Rate Limit). Sẽ kiểm tra lại ở chu kỳ tiếp theo.")
-                    return
-                elif resp.status != 200:
-                    logger.warning(f"GitHub API trả về mã lỗi: {resp.status}")
-                    return
-                data = await resp.json()
-                if not data or not isinstance(data, list):
-                    return
-
-                latest_commit = data[0]
-                sha = latest_commit.get("sha", "")
-                commit_msg = latest_commit.get("commit", {}).get("message", "Cập nhật mới")
-                author = latest_commit.get("commit", {}).get("author", {}).get("name", "titlee2111")
-                date_str = latest_commit.get("commit", {}).get("author", {}).get("date", "")
-                commit_url = latest_commit.get("html_url", f"https://github.com/{GITHUB_REPO}")
-
-                state = load_github_state()
-                last_sha = state.get("last_sha")
-                channel = bot.get_channel(UPDATE_CHANNEL_ID)
-
-                # Kiểm tra xem commit này đã được thông báo trong kênh chưa
-                already_posted = False
-                if channel:
-                    already_posted = await is_commit_already_posted(channel, sha[:7])
-
-                should_announce = False
-                if sha != last_sha and not already_posted:
-                    should_announce = True
-
-                if should_announce:
-                    # Phát hiện commit mới cần đăng!
-                    logger.info(f"Phát hiện bản cập nhật mới trên GitHub: {sha[:7]}")
-                    state["last_sha"] = sha
-                    state["last_date"] = date_str
-                    save_github_state(state)
-
-                    if channel:
-                        cleaned_msg = clean_commit_message(commit_msg)
-                        embed = discord.Embed(
-                            title="🚀 THÔNG BÁO CẬP NHẬT WEB MỚI TRÊN GITHUB!",
-                            description=(
-                                f"Web **WoR Helper Tools** vừa được tác giả cập nhật phiên bản mới!\n\n"
-                                f"**📝 Nội dung cập nhật:**\n{cleaned_msg}\n\n"
-                                f"**🔗 Chi tiết commit:** [`{sha[:7]}`]({commit_url})\n"
-                                f"**👤 Người cập nhật:** `{author}`\n"
-                                f"**🌐 Trang Web:** https://titlee2111.github.io/war-of-genesis-helper/\n\n"
-                                f"⚠️ **LƯU Ý QUAN TRỌNG CHO ANH EM:**\n"
-                                f"Nếu bản cập nhật có liên quan đến tính năng bot/lò rèn/LiveSync, anh em hãy vào lại trang web để tải gói **`LiveSync_1Click.zip`** mới nhất và cài đặt lại vào game nhé!"
-                            ),
-                            color=discord.Color.green()
-                        )
-                        embed.set_footer(text=f"GitHub: {GITHUB_REPO} • Tự động cập nhật bởi Tuấn Sờ Cu")
-                        await channel.send(content="@everyone", embed=embed)
-                        logger.info(f"Đã gửi thông báo cập nhật commit {sha[:7]} kèm tag @everyone vào kênh {UPDATE_CHANNEL_ID}")
-                    else:
-                        logger.warning(f"Không tìm thấy kênh thông báo ID: {UPDATE_CHANNEL_ID}")
-                else:
-                    if sha != last_sha:
-                        state["last_sha"] = sha
-                        state["last_date"] = date_str
-                        save_github_state(state)
-
-    except Exception as e:
-        logger.error(f"Lỗi khi kiểm tra GitHub updates: {e}")
-
-@check_github_updates.before_loop
-async def before_check_github():
-    await bot.wait_until_ready()
 
 # ==================== SUMMARY HELPER ====================
 
@@ -349,10 +231,7 @@ async def on_ready():
     except Exception as e:
         logger.warning(f"Không thể đọc thông tin chủ bot: {e}")
 
-    activity = discord.Activity(
-        type=discord.ActivityType.listening,
-        name=f"tag @{bot.user.name} hoặc hỏi đáp trong kênh"
-    )
+    activity = discord.CustomActivity(name="Chém gió cùng anh em 😎")
     await bot.change_presence(status=discord.Status.online, activity=activity)
 
     for guild in bot.guilds:
@@ -363,10 +242,34 @@ async def on_ready():
         except Exception as e:
             logger.warning(f"Không thể đồng bộ lệnh cho server {guild.name}: {e}")
 
-    # Bật tiến trình theo dõi cập nhật GitHub tự động
-    if not check_github_updates.is_running():
-        check_github_updates.start()
-        logger.info(f"Đã khởi động tiến trình theo dõi GitHub ({GITHUB_REPO}) -> Kênh ID: {UPDATE_CHANNEL_ID}")
+    # Tự động dọn dẹp các tin nhắn cũ của Tuấn trong kênh 1420142364454027307 khi bot có quyền
+    asyncio.create_task(auto_cleanup_target_channel())
+
+async def auto_cleanup_target_channel():
+    """Tự động dọn dẹp tin nhắn bot đã gửi ở kênh được chỉ định khi bot có quyền truy cập"""
+    await bot.wait_until_ready()
+    target_ch_id = 1420142364454027307
+    ch = bot.get_channel(target_ch_id)
+    if not ch:
+        try:
+            ch = await bot.fetch_channel(target_ch_id)
+        except Exception:
+            return
+    if ch:
+        deleted = 0
+        try:
+            async for msg in ch.history(limit=100):
+                if msg.author == bot.user:
+                    try:
+                        await msg.delete()
+                        deleted += 1
+                        await asyncio.sleep(0.4)
+                    except Exception:
+                        pass
+            if deleted > 0:
+                logger.info(f"Đã tự động xóa {deleted} tin nhắn của Tuấn Sờ Cu tại kênh {target_ch_id}")
+        except Exception as e:
+            logger.debug(f"Không thể xóa tin nhắn kênh {target_ch_id}: {e}")
 
 @bot.event
 async def on_message(message: discord.Message):
@@ -433,10 +336,13 @@ async def on_message(message: discord.Message):
 
             async with message.channel.typing():
                 try:
+                    # Thu thập 8 tin nhắn gần nhất trong kênh để nạp ngữ cảnh thảo luận
+                    recent_ctx = await fetch_recent_context(message.channel, before_message=message, limit=8)
                     reply_text = await ai.get_dark_knight_response(
                         channel_id=ch_id,
                         user_message=clean_dk,
-                        user_name=message.author.display_name
+                        user_name=message.author.display_name,
+                        recent_context=recent_ctx
                     )
                     chunks = split_message(reply_text)
                     for i, chunk in enumerate(chunks):
@@ -460,7 +366,7 @@ async def on_message(message: discord.Message):
                     description=res,
                     color=discord.Color.gold()
                 )
-                embed.set_footer(text=f"Kênh: #{message.channel.name} • Tóm tắt bởi Tuấn Sờ Cu AI")
+                embed.set_footer(text=f"Kênh: #{message.channel.name} • Tóm tắt bởi Tuấn Sờ Cu 😎")
                 await message.reply(embed=embed, mention_author=False)
             else:
                 await message.reply(count, mention_author=False)
@@ -530,7 +436,7 @@ async def on_message(message: discord.Message):
                         color=discord.Color.gold()
                     )
                     ch_name = "DM" if is_dm else getattr(message.channel, "name", "Chat")
-                    embed.set_footer(text=f"Kênh: #{ch_name} • Tóm tắt bởi Tuấn Sờ Cu AI")
+                    embed.set_footer(text=f"Kênh: #{ch_name} • Tóm tắt bởi Tuấn Sờ Cu 😎")
                     try:
                         await message.reply(embed=embed, mention_author=False)
                     except Exception:
@@ -547,7 +453,8 @@ async def on_message(message: discord.Message):
 
         async with message.channel.typing():
             author_name = message.author.display_name
-            reply_text = await ai.get_response(message.channel.id, clean_content, author_name)
+            recent_ctx = await fetch_recent_context(message.channel, before_message=message, limit=8)
+            reply_text = await ai.get_response(message.channel.id, clean_content, author_name, recent_context=recent_ctx)
             chunks = split_message(reply_text)
             for i, chunk in enumerate(chunks):
                 try:
@@ -594,17 +501,10 @@ async def summary_cmd(ctx: commands.Context, limit: int = 30):
                 description=res,
                 color=discord.Color.gold()
             )
-            embed.set_footer(text=f"Kênh: #{ctx.channel.name} • Tóm tắt bởi Tuấn Sờ Cu AI")
+            embed.set_footer(text=f"Kênh: #{ctx.channel.name} • Tóm tắt bởi Tuấn Sờ Cu 😎")
             await ctx.reply(embed=embed)
         else:
             await ctx.reply(count)
-
-@bot.command(name="checkupdate", aliases=["updatecheck"])
-async def check_update_cmd(ctx: commands.Context):
-    """Kiểm tra cập nhật GitHub thủ công: !checkupdate"""
-    await ctx.reply("🔍 Đang kiểm tra cập nhật mới nhất từ GitHub...")
-    await check_github_updates()
-    await ctx.reply("✅ Đã kiểm tra xong trạng thái cập nhật trên GitHub!")
 
 @bot.command(name="reload", aliases=["napkienthuc", "load"])
 async def reload_cmd(ctx: commands.Context):
@@ -627,32 +527,47 @@ async def ping_cmd(ctx: commands.Context):
     latency = round(bot.latency * 1000)
     await ctx.reply(f"🏓 Pong! Độ trễ hiện tại: **{latency}ms**.")
 
+@bot.command(name="clearbot", aliases=["xoabot", "donbot"])
+async def clear_bot_cmd(ctx: commands.Context, limit: int = 50):
+    """Xóa tất cả tin nhắn Tuấn Sờ Cu đã gửi trong kênh này: !clearbot [số_tin]"""
+    deleted_count = 0
+    async with ctx.typing():
+        try:
+            async for msg in ctx.channel.history(limit=min(limit, 200)):
+                if msg.author == bot.user:
+                    try:
+                        await msg.delete()
+                        deleted_count += 1
+                        await asyncio.sleep(0.4)
+                    except Exception:
+                        pass
+            notice = await ctx.send(f"🧹 Đã xóa sạch {deleted_count} tin nhắn của Tuấn trong kênh này!")
+            await asyncio.sleep(4)
+            try:
+                await notice.delete()
+            except Exception:
+                pass
+        except Exception as e:
+            await ctx.send(f"❌ Lỗi khi dọn dẹp: {e}")
+
 @bot.command(name="help", aliases=["trogiup", "huongdan"])
 async def help_cmd(ctx: commands.Context):
     """Hiển thị menu trợ giúp: !help"""
     embed = discord.Embed(
-        title="🤖 Menu Hướng Dẫn Bot Tuấn Sờ Cu",
-        description="Chào mừng bạn đến với **Tuấn Sờ Cu#3019**! Dưới đây là các tính năng chính:",
+        title="😎 Tuấn Sờ Cu — Đẹp Trai Số 1 Server",
+        description="Tuấn Sờ Cu bằng xương bằng thịt, luôn sẵn sàng chém gió, tấu hài và đồng hành cùng anh em!",
         color=discord.Color.blue()
     )
     embed.add_field(
-        name="💬 1. Tự Động Trả Lời & Đọc Ảnh",
+        name="💬 1. Chém Gió Tự Động & Đọc Ảnh",
         value=(
-            "• **Tự động hỗ trợ trong mọi kênh:** Bất kỳ ai hỏi đáp, thắc mắc hoặc báo lỗi, bot sẽ tự động nhận diện và giải đáp ngay mà không cần tag!\n"
-            "• **Đọc và phân tích hình ảnh (Vision AI):** Gửi ảnh chụp màn hình game, lỗi CMD, giao diện vào kênh chat, bot sẽ đọc chữ trên ảnh và hướng dẫn cách sửa chi tiết!"
+            "• **Nói chuyện tự nhiên:** Cứ tag Tuấn hoặc réo tên 'Tuấn ơi' là Tuấn sẽ nhảy vào chém gió ngay!\n"
+            "• **Đọc ảnh:** Gửi bất kỳ bức ảnh nào vào kênh, Tuấn cũng đọc được và bình luận cùng anh em."
         ),
         inline=False
     )
     embed.add_field(
-        name="🚀 2. Tự Động Báo Cập Nhật Web GitHub",
-        value=(
-            f"• Bot tự động theo dõi GitHub repository `{GITHUB_REPO}` mỗi 60 giây.\n"
-            f"• Khi có commit cập nhật mới, bot sẽ tự động đăng thông báo chi tiết vào kênh <#{UPDATE_CHANNEL_ID}>."
-        ),
-        inline=False
-    )
-    embed.add_field(
-        name="📋 3. Tóm Tắt Tin Nhắn Trong Kênh",
+        name="📋 2. Tóm Tắt Tin Nhắn Trong Kênh",
         value=(
             f"• Gõ đơn giản: `summary` hoặc `tóm tắt`\n"
             f"• Gõ lệnh: `{PREFIX}summary [số_tin]` (Ví dụ: `{PREFIX}summary 30`)\n"
@@ -660,7 +575,7 @@ async def help_cmd(ctx: commands.Context):
         ),
         inline=False
     )
-    embed.set_footer(text="Tuấn Sờ Cu AI • Tự động hỗ trợ 24/7")
+    embed.set_footer(text="Tuấn Sờ Cu • Người thật đẹp trai nhất vũ trụ • Boss: Memories 😎")
     await ctx.reply(embed=embed)
 
 @bot.event
@@ -672,7 +587,7 @@ async def on_command_error(ctx: commands.Context, error):
 
 # ==================== CÁC LỆNH SLASH (/) ====================
 
-@bot.tree.command(name="chat", description="Trò chuyện hoặc đặt câu hỏi với bot Tuấn Sờ Cu")
+@bot.tree.command(name="chat", description="Trò chuyện hoặc đặt câu hỏi với Tuấn Sờ Cu")
 @app_commands.describe(cau_hoi="Nội dung bạn muốn hỏi hoặc trò chuyện")
 async def slash_chat(interaction: discord.Interaction, cau_hoi: str):
     await interaction.response.defer(thinking=True)
@@ -694,7 +609,7 @@ async def slash_summary(interaction: discord.Interaction, so_luong: int = 30):
     try:
         # Thông báo trạng thái đang xử lý
         await interaction.followup.send(
-            f"⏳ Đang đọc **{so_luong}** tin nhắn và tóm tắt bằng AI... (có thể mất 10-30 giây)",
+            f"⏳ Đang đọc **{so_luong}** tin nhắn và tóm tắt... (chờ xíu nha)",
             ephemeral=True
         )
         res, count = await execute_summary(interaction.channel, so_luong)
@@ -706,7 +621,7 @@ async def slash_summary(interaction: discord.Interaction, so_luong: int = 30):
                 description=description,
                 color=discord.Color.gold()
             )
-            embed.set_footer(text=f"Kênh: #{interaction.channel.name} • Tóm tắt bởi Tuấn Sờ Cu AI")
+            embed.set_footer(text=f"Kênh: #{interaction.channel.name} • Tóm tắt bởi Tuấn Sờ Cu 😎")
             await interaction.channel.send(embed=embed)
         else:
             await interaction.channel.send(count)  # count chứa thông báo lỗi khi res=None
@@ -717,39 +632,51 @@ async def slash_summary(interaction: discord.Interaction, so_luong: int = 30):
         except Exception:
             await interaction.channel.send(f"❌ Lỗi khi tóm tắt kênh này: {e}")
 
-@bot.tree.command(name="checkupdate", description="Kiểm tra xem GitHub web đã có bản cập nhật mới chưa")
-async def slash_checkupdate(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-    await check_github_updates()
-    await interaction.followup.send("✅ Đã kiểm tra xong trạng thái cập nhật trên GitHub!")
-
 @bot.tree.command(name="reload", description="Cập nhật lại kiến thức mới nhất từ file kien_thuc.txt")
 async def slash_reload(interaction: discord.Interaction):
     result = ai.load_knowledge()
     await interaction.response.send_message(f"🔄 **Cập nhật:** {result}", ephemeral=True)
 
-@bot.tree.command(name="reset", description="Xóa lịch sử nhớ của bot trong kênh này")
+@bot.tree.command(name="reset", description="Xóa lịch sử nhớ trong kênh này")
 async def slash_reset(interaction: discord.Interaction):
     ai.reset_history(interaction.channel_id)
     await interaction.response.send_message("🧹 Đã làm mới ký ức cuộc trò chuyện trong kênh này!")
 
-@bot.tree.command(name="ping", description="Kiểm tra độ trễ mạng của bot")
+@bot.tree.command(name="ping", description="Kiểm tra độ trễ mạng")
 async def slash_ping(interaction: discord.Interaction):
     latency = round(bot.latency * 1000)
     await interaction.response.send_message(f"🏓 Pong! Độ trễ: **{latency}ms**.")
 
-@bot.tree.command(name="help", description="Xem hướng dẫn sử dụng bot Tuấn Sờ Cu")
+@bot.tree.command(name="clearbot", description="Xóa tất cả tin nhắn mà Tuấn Sờ Cu đã gửi gần đây trong kênh này")
+@app_commands.describe(so_luong="Số lượng tin nhắn cần quét để xóa (Mặc định: 50, tối đa: 200)")
+async def slash_clearbot(interaction: discord.Interaction, so_luong: int = 50):
+    await interaction.response.defer(ephemeral=True)
+    deleted_count = 0
+    try:
+        async for msg in interaction.channel.history(limit=min(so_luong, 200)):
+            if msg.author == bot.user:
+                try:
+                    await msg.delete()
+                    deleted_count += 1
+                    await asyncio.sleep(0.4)
+                except Exception:
+                    pass
+        await interaction.followup.send(f"🧹 Đã xóa sạch **{deleted_count}** tin nhắn của Tuấn Sờ Cu trong kênh này!", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Lỗi: {e}", ephemeral=True)
+
+@bot.tree.command(name="help", description="Xem hướng dẫn sử dụng Tuấn Sờ Cu")
 async def slash_help(interaction: discord.Interaction):
     embed = discord.Embed(
-        title="🤖 Menu Hướng Dẫn Bot Tuấn Sờ Cu",
-        description="Chào bạn! Dưới đây là các tính năng chính của bot:",
+        title="😎 Menu Hướng Dẫn Tuấn Sờ Cu",
+        description="Chào anh em! Dưới đây là các tính năng của Tuấn Sờ Cu:",
         color=discord.Color.blue()
     )
     embed.add_field(
-        name="💬 1. Hỗ Trợ & Trả Lời Thành Viên",
+        name="💬 1. Chém Gió & Tương Tác",
         value=(
-            "• **Tự động hỗ trợ trong mọi kênh:** Nhận diện câu hỏi/báo lỗi và giải đáp cho thành viên.\n"
-            "• **Đọc ảnh (Vision AI):** Phân tích ảnh chụp màn hình game, lỗi CMD...\n"
+            "• **Nói chuyện tự nhiên:** Cứ tag Tuấn hoặc réo tên 'Tuấn ơi' là Tuấn sẽ nhảy vào chém gió ngay!\n"
+            "• **Đọc ảnh:** Gửi bất kỳ bức ảnh nào vào kênh, Tuấn cũng đọc được và bình luận cùng anh em.\n"
             "• **Ra lệnh trả lời 1 người ở kênh bất kỳ:**\n"
             "  - Cách 1: Chuột phải vào tin nhắn ➔ **Apps** ➔ **Tuấn Trả Lời Tin Này**.\n"
             "  - Cách 2: Dùng lệnh `/tra_loi kenh:#kênh nguoi_hoi:@user cau_hoi:...`"
@@ -757,13 +684,15 @@ async def slash_help(interaction: discord.Interaction):
         inline=False
     )
     embed.add_field(
-        name="🚀 2. Tiện Ích Khác",
+        name="📋 2. Tiện Ích Khác",
         value=(
-            "• Tự động đăng tin cập nhật GitHub vào kênh update-status.\n"
-            "• `/summary <số lượng>` hoặc gõ `summary` để tóm tắt tin nhắn."
+            "• `/summary [số lượng]` hoặc gõ `summary` để tóm tắt tin nhắn kênh.\n"
+            "• `/ping` kiểm tra độ trễ mạng.\n"
+            "• `/reset` làm mới ký ức cuộc trò chuyện trong kênh."
         ),
         inline=False
     )
+    embed.set_footer(text="Tuấn Sờ Cu • Người thật đẹp trai nhất vũ trụ • Boss: Memories 😎")
     await interaction.response.send_message(embed=embed)
 
 # ==================== LỆNH ĐIỀU BOT TRẢ LỜI CHO 1 NGƯỜI Ở KÊNH CỤ THỂ ====================
