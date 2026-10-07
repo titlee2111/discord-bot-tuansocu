@@ -392,7 +392,10 @@ async def on_message(message: discord.Message):
     # =====================================================================
     is_dk_server = (
         message.guild is not None and
-        message.guild.id == DARK_KNIGHT_GUILD_ID and
+        (
+            message.guild.id == DARK_KNIGHT_GUILD_ID or
+            "dark knight" in message.guild.name.lower()
+        ) and
         isinstance(message.channel, discord.TextChannel)
     )
 
@@ -403,12 +406,21 @@ async def on_message(message: discord.Message):
         ch_id = message.channel.id
 
         should_reply_dk = False
-        if is_mentioned_dk:
-            should_reply_dk = True
-        elif random.random() < DK_REPLY_CHANCE:
-            last_t = dk_last_reply.get(ch_id, 0)
-            if now - last_t >= 6.0:
+        is_calling_name = any(k in content_lower for k in ["tuấn", "tuan", "tuấn sờ cu", "chú tuấn", "anh tuấn", "thằng tuấn"])
+        last_t = dk_last_reply.get(ch_id, 0)
+        time_passed = now - last_t
+
+        # 1. Nếu tag bot hoặc gọi tên Tuấn -> 100% trả lời (cooldown ngắn 2.5s)
+        if is_mentioned_dk or is_calling_name:
+            if time_passed >= 2.5 or is_mentioned_dk:
                 should_reply_dk = True
+        # 2. Nếu là câu hỏi hoặc thắc mắc -> 85% cơ hội trả lời (cooldown 3.5s)
+        elif ("?" in content_clean or "？" in content_clean or any(w in content_lower for w in ["sao", "gì", "đâu", "ai", "hả", "thế", "chưa", "kèo", "game"])) and time_passed >= 3.5:
+            if random.random() < 0.85:
+                should_reply_dk = True
+        # 3. Các cuộc trò chuyện bình thường khác -> 70% cơ hội nhảy vào hóng hớt (cooldown 4s)
+        elif random.random() < DK_REPLY_CHANCE and time_passed >= 4.0:
+            should_reply_dk = True
 
         if should_reply_dk:
             dk_last_reply[ch_id] = now
@@ -888,15 +900,37 @@ async def run_bot_with_retry():
             logger.info("Đang đăng nhập vào Discord...")
             await bot.start(TOKEN)
         except discord.errors.HTTPException as e:
+            try:
+                await bot.close()
+            except Exception:
+                pass
             if e.status == 429:
+                # Đọc thời gian Discord yêu cầu chờ (nếu có trong header)
+                retry_after = getattr(e, "retry_after", None)
+                if not retry_after and hasattr(e, "response") and hasattr(e.response, "headers"):
+                    retry_after = e.response.headers.get("Retry-After")
+                
+                try:
+                    wait_time = float(retry_after) if retry_after else 90
+                except (ValueError, TypeError):
+                    wait_time = 90
+                
+                # Nghỉ ít nhất 60s để Cloudflare Discord kịp nhả lệnh chặn IP
+                wait_time = max(wait_time, 60)
                 logger.warning(
                     f"⚠️ Discord báo lỗi 429 Too Many Requests: Cụm IP của Render đang bị Discord Cloudflare giới hạn tạm thời.\n"
                     f"Web server vẫn đang mở trên cổng PORT để giữ Render luôn ở trạng thái Live.\n"
-                    f"Bot sẽ tự động thử kết nối lại sau {retry_delay} giây..."
+                    f"Bot sẽ tự động chờ {int(wait_time)} giây trước khi thử kết nối lại..."
                 )
+                await asyncio.sleep(wait_time)
+                continue
             else:
                 logger.error(f"Lỗi HTTPException khi kết nối Discord: {e}. Thử lại sau {retry_delay}s...")
         except Exception as e:
+            try:
+                await bot.close()
+            except Exception:
+                pass
             logger.error(f"Lỗi khi chạy bot: {e}. Sẽ thử lại sau {retry_delay} giây...")
         
         await asyncio.sleep(retry_delay)
