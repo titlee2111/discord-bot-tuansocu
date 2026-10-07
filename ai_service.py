@@ -3,6 +3,9 @@ import aiohttp
 import logging
 import base64
 from collections import defaultdict
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +121,60 @@ class AIService:
             )
         return prompt
 
+    async def _call_llm(self, messages: list, max_tokens: int = 1000, temperature: float = 0.5) -> str:
+        """Gọi LLM: Ưu tiên NVIDIA NIM (cực nhanh, ổn định), dự phòng Pollinations"""
+        # 1. Thử gọi qua NVIDIA NIM API
+        if self.nvidia_api_key:
+            headers = {
+                "Authorization": f"Bearer {self.nvidia_api_key}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "model": "meta/llama-3.2-11b-vision-instruct",
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature
+            }
+            try:
+                timeout = aiohttp.ClientTimeout(total=25)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.post(
+                        "https://integrate.api.nvidia.com/v1/chat/completions",
+                        headers=headers,
+                        json=payload
+                    ) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            content = data["choices"][0]["message"]["content"].strip()
+                            if content:
+                                return content
+                        else:
+                            err = await resp.text()
+                            logger.warning(f"NVIDIA API status {resp.status}: {err[:150]}")
+            except Exception as e:
+                logger.warning(f"Lỗi khi gọi NVIDIA NIM API: {e}")
+
+        # 2. Dự phòng: Thử gọi qua Pollinations API
+        payload_pol = {
+            "messages": messages,
+            "model": "openai",
+            "jsonMode": False
+        }
+        try:
+            timeout = aiohttp.ClientTimeout(total=20)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post("https://text.pollinations.ai/", json=payload_pol) as resp:
+                    if resp.status == 200:
+                        text = await resp.text()
+                        if text.strip():
+                            return text.strip()
+                    else:
+                        logger.warning(f"Pollinations API status {resp.status}")
+        except Exception as e:
+            logger.warning(f"Lỗi khi gọi Pollinations API: {e}")
+
+        return ""
+
     def reset_history(self, channel_id: int):
         """Xóa lịch sử trò chuyện trong một kênh"""
         if channel_id in self.conversations:
@@ -137,46 +194,17 @@ class AIService:
             messages.append(msg)
 
         # Thêm tin nhắn hiện tại
-        current_user_msg = {"role": "user", "content": f"{user_name}: {user_message}"}
-        messages.append(current_user_msg)
+        messages.append({"role": "user", "content": f"{user_name}: {user_message}"})
 
-        payload = {
-            "messages": messages,
-            "model": "openai",
-            "jsonMode": False
-        }
+        reply = await self._call_llm(messages, max_tokens=1000, temperature=0.5)
+        if reply:
+            history.append({"role": "user", "content": f"{user_name}: {user_message}"})
+            history.append({"role": "assistant", "content": reply})
+            if len(history) > self.max_history * 2:
+                self.conversations[channel_id] = history[-self.max_history * 2:]
+            return reply
 
-        url = "https://text.pollinations.ai/"
-
-        for attempt in range(2):
-            try:
-                timeout = aiohttp.ClientTimeout(total=35)
-                async with aiohttp.ClientSession(timeout=timeout) as session:
-                    async with session.post(url, json=payload) as resp:
-                        if resp.status == 200:
-                            reply = await resp.text()
-                            reply = reply.strip()
-                            if reply:
-                                history.append({"role": "user", "content": f"{user_name}: {user_message}"})
-                                history.append({"role": "assistant", "content": reply})
-                                if len(history) > self.max_history * 2:
-                                    self.conversations[channel_id] = history[-self.max_history * 2:]
-                                return reply
-                        elif attempt == 0:
-                            await asyncio.sleep(1.5)
-                            continue
-                        else:
-                            error_text = await resp.text()
-                            logger.error(f"AI API error {resp.status}: {error_text}")
-                            return f"Ui da, máy chủ AI đang báo lỗi (Mã: {resp.status}). Bác thử lại xíu nha!"
-            except Exception as e:
-                logger.error(f"Error calling AI API (attempt {attempt+1}): {e}")
-                if attempt == 0:
-                    await asyncio.sleep(1.5)
-                    continue
-                return "Ui lag quá, mình chưa kịp load câu trả lời. Bác thử hỏi lại xem sao nha!"
-
-        return "Tuấn Sờ Cu đang ngơ ngác, chưa nghĩ ra câu trả lời. Bác hỏi lại phát nữa nào!"
+        return "Tuấn Sờ Cu đang bị lag kết nối xíu, bác nhắn lại phát nữa xem sao nha!"
 
     async def analyze_image(self, image_bytes: bytes, content_type: str, user_prompt: str, user_name: str = "User") -> str:
         """Đọc và phân tích hình ảnh (ảnh chụp màn hình game, lỗi CMD, giao diện) bằng Vision AI Model"""
@@ -229,7 +257,7 @@ class AIService:
             return f"Không thể phân tích ảnh do lỗi kết nối: {e}"
 
     async def summarize_chat(self, raw_chat_text: str, message_count: int) -> str:
-        """Tóm tắt đoạn chat trong kênh Discord (có retry 3 lần)"""
+        """Tóm tắt đoạn chat trong kênh Discord bằng AI"""
         prompt = (
             f"Bạn là Tuấn Sờ Cu. Dưới đây là {message_count} tin nhắn gần nhất trong kênh chat Discord.\n"
             "Hãy tóm tắt ngắn gọn, mạch lạc và rõ ràng những nội dung sau:\n"
@@ -246,47 +274,14 @@ class AIService:
             {"role": "user", "content": prompt}
         ]
 
-        payload = {
-            "messages": messages,
-            "model": "openai",
-            "jsonMode": False
-        }
+        reply = await self._call_llm(messages, max_tokens=1000, temperature=0.4)
+        if reply:
+            return reply
 
-        url = "https://text.pollinations.ai/"
-
-        last_error = None
-        for attempt in range(1, 4):  # Thử tối đa 3 lần
-            try:
-                timeout = aiohttp.ClientTimeout(total=30)  # 30s mỗi lần thử
-                async with aiohttp.ClientSession(timeout=timeout) as session:
-                    async with session.post(url, json=payload) as resp:
-                        if resp.status == 200:
-                            reply = await resp.text()
-                            if reply.strip():
-                                return reply.strip()
-                            # Trả về rỗng → thử lại
-                            last_error = "API trả về nội dung trống"
-                        else:
-                            last_error = f"Mã lỗi API: {resp.status}"
-                            if resp.status in (429, 503):
-                                # Rate limit hoặc server bận → thử lại sau
-                                import asyncio
-                                await asyncio.sleep(3 * attempt)
-                                continue
-                            return f"❌ Lỗi khi tóm tắt ({last_error}). Bạn thử lại sau nhé!"
-            except Exception as e:
-                last_error = str(e)
-                logger.warning(f"summarize_chat lần {attempt} thất bại: {e}")
-                if attempt < 3:
-                    import asyncio
-                    await asyncio.sleep(2 * attempt)
-                continue
-
-        logger.error(f"summarize_chat thất bại sau 3 lần thử. Lỗi cuối: {last_error}")
-        return f"❌ Không thể tóm tắt sau 3 lần thử (lỗi: {last_error}). Vui lòng thử lại sau ít phút!"
+        return "❌ Không thể tóm tắt do dịch vụ AI đang bận. Bạn vui lòng thử lại sau ít phút nhé!"
 
     async def get_dark_knight_response(self, channel_id: int, user_message: str, user_name: str = "Bro") -> str:
-        """Trả lời tin nhắn ở server The Dark Knight với nhân cách Tuấn Sờ Cu người thật (có retry 2 lần)"""
+        """Trả lời tin nhắn ở server The Dark Knight với nhân cách Tuấn Sờ Cu người thật"""
         history = self.dk_conversations[channel_id]
 
         messages = [{"role": "system", "content": self.dark_knight_prompt}]
@@ -298,55 +293,20 @@ class AIService:
         # Tin nhắn hiện tại
         messages.append({"role": "user", "content": f"{user_name}: {user_message}"})
 
-        payload = {
-            "messages": messages,
-            "model": "openai",
-            "seed": None,
-            "jsonMode": False
-        }
+        reply = await self._call_llm(messages, max_tokens=250, temperature=0.7)
+        if reply:
+            history.append({"role": "user", "content": f"{user_name}: {user_message}"})
+            history.append({"role": "assistant", "content": reply})
+            if len(history) > self.dk_max_history * 2:
+                self.dk_conversations[channel_id] = history[-self.dk_max_history * 2:]
+            return reply
 
-        url = "https://text.pollinations.ai/"
-
-        last_error = None
-        for attempt in range(1, 3):
-            try:
-                timeout = aiohttp.ClientTimeout(total=25)
-                async with aiohttp.ClientSession(timeout=timeout) as session:
-                    async with session.post(url, json=payload) as resp:
-                        if resp.status == 200:
-                            reply = await resp.text()
-                            reply = reply.strip()
-                            if reply:
-                                # Lưu vào lịch sử
-                                history.append({"role": "user", "content": f"{user_name}: {user_message}"})
-                                history.append({"role": "assistant", "content": reply})
-                                # Giới hạn lịch sử
-                                if len(history) > self.dk_max_history * 2:
-                                    self.dk_conversations[channel_id] = history[-(self.dk_max_history * 2):]
-                                return reply
-                            last_error = "API trả về rỗng"
-                        else:
-                            last_error = f"HTTP {resp.status}"
-                            if attempt < 2:
-                                import asyncio
-                                await asyncio.sleep(2)
-                            continue
-            except Exception as e:
-                last_error = str(e)
-                logger.warning(f"get_dark_knight_response lần {attempt} lỗi: {e}")
-                if attempt < 2:
-                    import asyncio
-                    await asyncio.sleep(2)
-                continue
-
-        logger.error(f"Dark Knight response thất bại: {last_error}")
-        # Fallback ngắn gọn kiểu người thật
         import random
         fallbacks = [
             "tao bận tí, nói lại sau 😂",
-            "ừ ừ tao nghe mày nói đó, haha",
-            "kk bro",
+            "mày nói gì đấy, tao vừa soi gương thấy đẹp trai quá quên mất rồi",
             "lmao đợi tao tí",
+            "ừ ừ tao nghe đây kkk",
         ]
         return random.choice(fallbacks)
 

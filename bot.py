@@ -376,9 +376,8 @@ async def on_message(message: discord.Message):
     content_clean = message.content.strip()
     content_lower = content_clean.lower()
 
-    # KHÔNG BAO GIỜ TỰ ĐỘNG REP KHI CHỦ BOT / ADMIN NHẮN TIN TRONG SERVER
+    # KHÔNG BAO GIỜ TỰ ĐỘNG REP KHI CHỦ BOT / ADMIN NHẮN TIN TRONG BẤT KỲ SERVER NÀO
     if message.author.id in IGNORED_USER_IDS:
-        # Nếu chủ bot chủ động gõ lệnh có tiền tố (!chat, !summary, !ping...) thì vẫn thực thi
         if content_clean.startswith(PREFIX):
             await bot.process_commands(message)
         return
@@ -403,7 +402,6 @@ async def on_message(message: discord.Message):
         now = time.time()
         ch_id = message.channel.id
 
-        # Cooldown chống spam: luôn rep khi bị tag, ngẫu nhiên 70% + cooldown 6s khi không tag
         should_reply_dk = False
         if is_mentioned_dk:
             should_reply_dk = True
@@ -414,7 +412,6 @@ async def on_message(message: discord.Message):
 
         if should_reply_dk:
             dk_last_reply[ch_id] = now
-            # Xóa mention bot khỏi nội dung
             clean_dk = content_clean
             for m in message.mentions:
                 clean_dk = clean_dk.replace(f"<@{m.id}>", "").replace(f"<@!{m.id}>", "")
@@ -437,10 +434,9 @@ async def on_message(message: discord.Message):
                             await message.channel.send(chunk)
                 except Exception as e:
                     logger.error(f"[DarkKnight] Lỗi reply: {e}")
-        return  # Dừng tại đây, không chạy logic WoR bên dưới
+        return
 
     # =====================================================================
-
 
     # 1. Hỗ trợ người dùng gõ chỉ mỗi chữ "summary" hoặc "tóm tắt"
     if content_lower in ["summary", "tóm tắt", "tom tat"]:
@@ -491,11 +487,11 @@ async def on_message(message: discord.Message):
         return
 
     # 3. KIỂM TRA ĐIỀU KIỆN TRẢ LỜI TIN NHẮN VĂN BẢN
+    is_dm = (message.guild is None) or isinstance(message.channel, discord.DMChannel)
     is_mentioned = bot.user.mentioned_in(message) and not message.mention_everyone
-    is_dm = isinstance(message.channel, discord.DMChannel)
     is_inquiry = is_user_inquiry(content_clean)
 
-    if is_mentioned or is_dm or is_inquiry:
+    if is_dm or is_mentioned or is_inquiry:
         now = time.time()
         ch_id = message.channel.id
         if not is_mentioned and not is_dm:
@@ -521,10 +517,17 @@ async def on_message(message: discord.Message):
                         description=res,
                         color=discord.Color.gold()
                     )
-                    embed.set_footer(text=f"Kênh: #{message.channel.name} • Tóm tắt bởi Tuấn Sờ Cu AI")
-                    await message.reply(embed=embed, mention_author=False)
+                    ch_name = "DM" if is_dm else getattr(message.channel, "name", "Chat")
+                    embed.set_footer(text=f"Kênh: #{ch_name} • Tóm tắt bởi Tuấn Sờ Cu AI")
+                    try:
+                        await message.reply(embed=embed, mention_author=False)
+                    except Exception:
+                        await message.channel.send(embed=embed)
                 else:
-                    await message.reply(count, mention_author=False)
+                    try:
+                        await message.reply(count, mention_author=False)
+                    except Exception:
+                        await message.channel.send(count)
             return
 
         if not clean_content:
@@ -535,9 +538,15 @@ async def on_message(message: discord.Message):
             reply_text = await ai.get_response(message.channel.id, clean_content, author_name)
             chunks = split_message(reply_text)
             for i, chunk in enumerate(chunks):
-                if i == 0:
-                    await message.reply(chunk, mention_author=False)
-                else:
+                try:
+                    if is_dm:
+                        await message.channel.send(chunk)
+                    elif i == 0:
+                        await message.reply(chunk, mention_author=False)
+                    else:
+                        await message.channel.send(chunk)
+                except Exception as e:
+                    logger.warning(f"Lỗi khi gửi reply ({e}), thử send trực tiếp...")
                     await message.channel.send(chunk)
         return
 
