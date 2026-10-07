@@ -577,20 +577,30 @@ async def slash_chat(interaction: discord.Interaction, cau_hoi: str):
 async def slash_summary(interaction: discord.Interaction, so_luong: int = 30):
     await interaction.response.defer(thinking=True)
     try:
+        # Thông báo trạng thái đang xử lý
+        await interaction.followup.send(
+            f"⏳ Đang đọc **{so_luong}** tin nhắn và tóm tắt bằng AI... (có thể mất 10-30 giây)",
+            ephemeral=True
+        )
         res, count = await execute_summary(interaction.channel, so_luong)
         if res:
+            # Cắt nếu quá 4096 ký tự (giới hạn Discord embed description)
+            description = res if len(res) <= 4000 else res[:3997] + "..."
             embed = discord.Embed(
                 title=f"📋 Bảng Tóm Tắt {count} Tin Nhắn Gần Nhất",
-                description=res,
+                description=description,
                 color=discord.Color.gold()
             )
             embed.set_footer(text=f"Kênh: #{interaction.channel.name} • Tóm tắt bởi Tuấn Sờ Cu AI")
-            await interaction.followup.send(embed=embed)
+            await interaction.channel.send(embed=embed)
         else:
-            await interaction.followup.send(count)
+            await interaction.channel.send(count)  # count chứa thông báo lỗi khi res=None
     except Exception as e:
         logger.error(f"Lỗi slash_summary: {e}")
-        await interaction.followup.send(f"Không thể tóm tắt: {e}")
+        try:
+            await interaction.followup.send(f"❌ Không thể tóm tắt: {e}", ephemeral=True)
+        except Exception:
+            await interaction.channel.send(f"❌ Lỗi khi tóm tắt kênh này: {e}")
 
 @bot.tree.command(name="checkupdate", description="Kiểm tra xem GitHub web đã có bản cập nhật mới chưa")
 async def slash_checkupdate(interaction: discord.Interaction):

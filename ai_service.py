@@ -191,7 +191,7 @@ class AIService:
             return f"Không thể phân tích ảnh do lỗi kết nối: {e}"
 
     async def summarize_chat(self, raw_chat_text: str, message_count: int) -> str:
-        """Tóm tắt đoạn chat trong kênh Discord"""
+        """Tóm tắt đoạn chat trong kênh Discord (có retry 3 lần)"""
         prompt = (
             f"Bạn là Tuấn Sờ Cu. Dưới đây là {message_count} tin nhắn gần nhất trong kênh chat Discord.\n"
             "Hãy tóm tắt ngắn gọn, mạch lạc và rõ ràng những nội dung sau:\n"
@@ -216,15 +216,33 @@ class AIService:
 
         url = "https://text.pollinations.ai/"
 
-        try:
-            timeout = aiohttp.ClientTimeout(total=50)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(url, json=payload) as resp:
-                    if resp.status == 200:
-                        reply = await resp.text()
-                        return reply.strip()
-                    else:
-                        return f"Lỗi khi tóm tắt (Mã lỗi API: {resp.status}). Bạn thử lại sau nhé!"
-        except Exception as e:
-            logger.error(f"Error summarizing: {e}")
-            return "Không thể tóm tắt do lỗi kết nối mạng tới AI."
+        last_error = None
+        for attempt in range(1, 4):  # Thử tối đa 3 lần
+            try:
+                timeout = aiohttp.ClientTimeout(total=30)  # 30s mỗi lần thử
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.post(url, json=payload) as resp:
+                        if resp.status == 200:
+                            reply = await resp.text()
+                            if reply.strip():
+                                return reply.strip()
+                            # Trả về rỗng → thử lại
+                            last_error = "API trả về nội dung trống"
+                        else:
+                            last_error = f"Mã lỗi API: {resp.status}"
+                            if resp.status in (429, 503):
+                                # Rate limit hoặc server bận → thử lại sau
+                                import asyncio
+                                await asyncio.sleep(3 * attempt)
+                                continue
+                            return f"❌ Lỗi khi tóm tắt ({last_error}). Bạn thử lại sau nhé!"
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"summarize_chat lần {attempt} thất bại: {e}")
+                if attempt < 3:
+                    import asyncio
+                    await asyncio.sleep(2 * attempt)
+                continue
+
+        logger.error(f"summarize_chat thất bại sau 3 lần thử. Lỗi cuối: {last_error}")
+        return f"❌ Không thể tóm tắt sau 3 lần thử (lỗi: {last_error}). Vui lòng thử lại sau ít phút!"
