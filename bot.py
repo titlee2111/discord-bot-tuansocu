@@ -11,6 +11,7 @@ from discord.ext import commands, tasks
 from discord import app_commands
 from dotenv import load_dotenv
 from ai_service import AIService
+from learning_service import LearningService
 
 # Thiết lập logging
 logging.basicConfig(
@@ -51,7 +52,9 @@ intents.guilds = True
 intents.members = True
 
 bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None)
-ai = AIService(base_system_prompt=SYSTEM_PROMPT, knowledge_file="kien_thuc.txt")
+learning = LearningService()
+ai = AIService(base_system_prompt=SYSTEM_PROMPT, knowledge_file="kien_thuc.txt", learning_service=learning)
+learning.ai_service = ai
 
 # Bộ đệm thời gian chống spam khi tự động trả lời trong kênh
 channel_last_reply = {}
@@ -275,6 +278,12 @@ async def auto_cleanup_target_channel():
 async def on_message(message: discord.Message):
     if message.author.bot:
         return
+
+    # Thu thập và ghi nhận tin nhắn trò chuyện của thành viên để training/học phong cách
+    try:
+        learning.record_message(message)
+    except Exception as e:
+        logger.debug(f"Lỗi record message: {e}")
 
     content_clean = message.content.strip()
     content_lower = content_clean.lower()
@@ -550,6 +559,60 @@ async def clear_bot_cmd(ctx: commands.Context, limit: int = 50):
         except Exception as e:
             await ctx.send(f"❌ Lỗi khi dọn dẹp: {e}")
 
+@bot.command(name="train", aliases=["hoc", "distill"])
+async def train_cmd(ctx: commands.Context):
+    """Kích hoạt AI phân tích các tin nhắn đã thu thập để học phong cách nói chuyện mới: !train"""
+    async with ctx.typing():
+        msg_wait = await ctx.send("🧠 Đang phân tích các đoạn chat gần đây để học phong cách của anh em...")
+        res = await learning.distill_knowledge(sample_limit=50)
+        slangs = res.get("slang_and_terms", [])
+        samples = res.get("sample_responses", [])
+        embed = discord.Embed(
+            title="🎓 Kết Quả Huấn Luyện Phong Cách Tuấn Sờ Cu",
+            description="Tuấn đã học thêm được các từ ngữ và lối đối đáp từ anh em trong server!",
+            color=discord.Color.green()
+        )
+        if slangs:
+            embed.add_field(name="🗣️ Từ lóng & Thuật ngữ đã học:", value=", ".join(slangs[:15]), inline=False)
+        if samples:
+            embed.add_field(name="💬 Mẫu câu chém gió tiêu biểu:", value="\n".join([f"• {s}" for s in samples[:4]]), inline=False)
+        embed.set_footer(text=f"Cập nhật lúc: {res.get('last_updated', 'Vừa xong')} • Boss: Memories 😎")
+        await msg_wait.edit(content=None, embed=embed)
+
+@bot.command(name="bootstrap_train", aliases=["hoctucquyen", "quet_hoc"])
+async def bootstrap_train_cmd(ctx: commands.Context, limit: int = 80):
+    """Quét ngay lập tức các tin nhắn trong kênh hiện tại để nạp dữ liệu và huấn luyện AI: !bootstrap_train [số_tin]"""
+    if limit > 200:
+        limit = 200
+    msg_status = await ctx.send(f"⏳ Đang quét {limit} tin nhắn trong kênh #{ctx.channel.name} để nạp dữ liệu huấn luyện...")
+    collected = 0
+    try:
+        async for prev_msg in ctx.channel.history(limit=limit):
+            if learning.record_message(prev_msg):
+                collected += 1
+        await msg_status.edit(content=f"📥 Đã nạp thành công {collected} tin nhắn! Đang cho Tuấn học phong cách...")
+        res = await learning.distill_knowledge(sample_limit=collected)
+        slangs = res.get("slang_and_terms", [])
+        await msg_status.edit(content=f"✅ Đã huấn luyện xong từ {collected} tin nhắn! Tuấn đã nắm được {len(slangs)} từ lóng/thuật ngữ mới của anh em 😎")
+    except Exception as e:
+        await msg_status.edit(content=f"❌ Lỗi khi quét dữ liệu: {e}")
+
+@bot.command(name="hoc_stats", aliases=["train_stats", "thongke_hoc"])
+async def hoc_stats_cmd(ctx: commands.Context):
+    """Xem thống kê dữ liệu chat và phong cách đã học: !hoc_stats"""
+    stats = learning.get_stats()
+    embed = discord.Embed(
+        title="📊 Thống Kê Dữ Liệu Training Tuấn Sờ Cu",
+        color=discord.Color.purple()
+    )
+    embed.add_field(name="📝 Tổng tin nhắn đã thu thập:", value=f"**{stats['total_raw_messages']}** tin", inline=True)
+    embed.add_field(name="🤝 Cặp đối đáp (Training Pairs):", value=f"**{stats['total_training_pairs']}** cặp", inline=True)
+    embed.add_field(name="🗣️ Từ lóng/thuật ngữ đã nạp:", value=f"**{stats['slang_count']}** từ", inline=True)
+    embed.add_field(name="💬 Mẫu câu chém gió đã lưu:", value=f"**{stats['sample_count']}** câu", inline=True)
+    embed.add_field(name="🕒 Lần học gần nhất:", value=stats['last_updated'], inline=False)
+    embed.set_footer(text="Tuấn Sờ Cu liên tục học hỏi từ anh em • Boss: Memories 😎")
+    await ctx.reply(embed=embed)
+
 @bot.command(name="help", aliases=["trogiup", "huongdan"])
 async def help_cmd(ctx: commands.Context):
     """Hiển thị menu trợ giúp: !help"""
@@ -572,6 +635,15 @@ async def help_cmd(ctx: commands.Context):
             f"• Gõ đơn giản: `summary` hoặc `tóm tắt`\n"
             f"• Gõ lệnh: `{PREFIX}summary [số_tin]` (Ví dụ: `{PREFIX}summary 30`)\n"
             f"• Dùng Slash command: `/summary [so_luong]`"
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name="🧠 3. Huấn Luyện AI Học Phong Cách Server",
+        value=(
+            f"• `{PREFIX}train`: AI tự phân tích các đoạn chat để học từ lóng & mẫu câu mới.\n"
+            f"• `{PREFIX}bootstrap_train [số_tin]`: Quét nhanh tin nhắn trong kênh để học ngay.\n"
+            f"• `{PREFIX}hoc_stats`: Xem thống kê dữ liệu chat và phong cách đã học."
         ),
         inline=False
     )
@@ -665,6 +737,59 @@ async def slash_clearbot(interaction: discord.Interaction, so_luong: int = 50):
     except Exception as e:
         await interaction.followup.send(f"❌ Lỗi: {e}", ephemeral=True)
 
+@bot.tree.command(name="train", description="Kích hoạt AI chắt lọc và học phong cách trò chuyện mới từ server")
+async def slash_train(interaction: discord.Interaction):
+    await interaction.response.defer(thinking=True)
+    try:
+        res = await learning.distill_knowledge(sample_limit=50)
+        slangs = res.get("slang_and_terms", [])
+        samples = res.get("sample_responses", [])
+        embed = discord.Embed(
+            title="🎓 Kết Quả Huấn Luyện Phong Cách Tuấn Sờ Cu",
+            description="Tuấn đã học thêm được các từ ngữ và lối đối đáp từ anh em trong server!",
+            color=discord.Color.green()
+        )
+        if slangs:
+            embed.add_field(name="🗣️ Từ lóng & Thuật ngữ đã học:", value=", ".join(slangs[:15]), inline=False)
+        if samples:
+            embed.add_field(name="💬 Mẫu câu chém gió tiêu biểu:", value="\n".join([f"• {s}" for s in samples[:4]]), inline=False)
+        embed.set_footer(text=f"Cập nhật lúc: {res.get('last_updated', 'Vừa xong')} • Boss: Memories 😎")
+        await interaction.followup.send(embed=embed)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Lỗi: {e}")
+
+@bot.tree.command(name="bootstrap_train", description="Quét các tin nhắn gần nhất trong kênh để nạp dữ liệu và huấn luyện ngay")
+@app_commands.describe(so_tin="Số lượng tin nhắn cần quét trong kênh này (Mặc định: 80, tối đa: 200)")
+async def slash_bootstrap_train(interaction: discord.Interaction, so_tin: int = 80):
+    await interaction.response.defer(thinking=True)
+    if so_tin > 200:
+        so_tin = 200
+    try:
+        collected = 0
+        async for prev_msg in interaction.channel.history(limit=so_tin):
+            if learning.record_message(prev_msg):
+                collected += 1
+        res = await learning.distill_knowledge(sample_limit=collected)
+        slangs = res.get("slang_and_terms", [])
+        await interaction.followup.send(f"✅ Đã quét {collected} tin nhắn và huấn luyện xong! Tuấn đã nắm được {len(slangs)} từ lóng/thuật ngữ của server 😎")
+    except Exception as e:
+        await interaction.followup.send(f"❌ Lỗi: {e}")
+
+@bot.tree.command(name="hoc_stats", description="Xem thống kê dữ liệu chat và phong cách Tuấn Sờ Cu đã học")
+async def slash_hoc_stats(interaction: discord.Interaction):
+    stats = learning.get_stats()
+    embed = discord.Embed(
+        title="📊 Thống Kê Dữ Liệu Training Tuấn Sờ Cu",
+        color=discord.Color.purple()
+    )
+    embed.add_field(name="📝 Tổng tin nhắn đã thu thập:", value=f"**{stats['total_raw_messages']}** tin", inline=True)
+    embed.add_field(name="🤝 Cặp đối đáp (Training Pairs):", value=f"**{stats['total_training_pairs']}** cặp", inline=True)
+    embed.add_field(name="🗣️ Từ lóng/thuật ngữ đã nạp:", value=f"**{stats['slang_count']}** từ", inline=True)
+    embed.add_field(name="💬 Mẫu câu chém gió đã lưu:", value=f"**{stats['sample_count']}** câu", inline=True)
+    embed.add_field(name="🕒 Lần học gần nhất:", value=stats['last_updated'], inline=False)
+    embed.set_footer(text="Tuấn Sờ Cu liên tục học hỏi từ anh em • Boss: Memories 😎")
+    await interaction.response.send_message(embed=embed)
+
 @bot.tree.command(name="help", description="Xem hướng dẫn sử dụng Tuấn Sờ Cu")
 async def slash_help(interaction: discord.Interaction):
     embed = discord.Embed(
@@ -687,8 +812,18 @@ async def slash_help(interaction: discord.Interaction):
         name="📋 2. Tiện Ích Khác",
         value=(
             "• `/summary [số lượng]` hoặc gõ `summary` để tóm tắt tin nhắn kênh.\n"
+            "• `/clearbot` xóa nhanh tin nhắn của Tuấn trong kênh.\n"
             "• `/ping` kiểm tra độ trễ mạng.\n"
             "• `/reset` làm mới ký ức cuộc trò chuyện trong kênh."
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name="🧠 3. Huấn Luyện AI Học Phong Cách Server",
+        value=(
+            "• `/train`: Kích hoạt AI phân tích các đoạn chat để học phong cách mới.\n"
+            "• `/bootstrap_train [so_tin]`: Quét nhanh tin nhắn trong kênh để học ngay.\n"
+            "• `/hoc_stats`: Xem thống kê dữ liệu chat và phong cách đã nạp."
         ),
         inline=False
     )

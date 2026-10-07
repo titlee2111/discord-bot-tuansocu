@@ -45,7 +45,8 @@ def clean_bot_reply(text: str) -> str:
     return cleaned
 
 class AIService:
-    def __init__(self, base_system_prompt: str = None, knowledge_file: str = "kien_thuc.txt"):
+    def __init__(self, base_system_prompt: str = None, knowledge_file: str = "kien_thuc.txt", learning_service=None):
+        self.learning_service = learning_service
         self.human_prompt = (
             "Mày tên là Tuấn Sờ Cu — một thành viên bằng xương bằng thịt, người thật 100% trong server Discord.\n"
             "Mày là một thanh niên game thủ vui tính, anh em chiến hữu trong server, KHÔNG PHẢI bot, KHÔNG PHẢI AI, KHÔNG PHẢI trợ lý ảo.\n\n"
@@ -134,8 +135,13 @@ class AIService:
         return ""
 
     def build_system_prompt(self) -> str:
-        """Trả về system prompt của Tuấn Sờ Cu người thật 100%"""
-        return self.human_prompt
+        """Trả về system prompt của Tuấn Sờ Cu người thật 100%, tự động nạp từ lóng và phong cách học được từ server"""
+        prompt = self.human_prompt
+        if self.learning_service:
+            learned_inject = self.learning_service.get_learned_prompt_injection()
+            if learned_inject:
+                prompt = prompt + "\n" + learned_inject
+        return prompt
 
     async def _call_llm(self, messages: list, max_tokens: int = 1000, temperature: float = 0.5) -> str:
         """Gọi LLM: Ưu tiên NVIDIA NIM (cực nhanh, ổn định), dự phòng Pollinations"""
@@ -312,7 +318,8 @@ class AIService:
         """Trả lời tin nhắn ở server The Dark Knight với nhân cách Tuấn Sờ Cu người thật, nắm bắt ngữ cảnh kênh"""
         history = self.dk_conversations[channel_id]
 
-        messages = [{"role": "system", "content": self.dark_knight_prompt}]
+        system_prompt = self.build_system_prompt()
+        messages = [{"role": "system", "content": system_prompt}]
 
         # Thêm lịch sử hội thoại gần đây của bot
         for msg in history[-self.dk_max_history:]:
